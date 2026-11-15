@@ -122,6 +122,9 @@ const GATE_FLAG_SPECS = {
   // 本次临时豁免（逗号分隔）：传入后由本包自己过滤，语义「豁免即豁免，含 blocker」
   '--exempt-paths': { needsValue: true, apply: (target, rawValue) => { target.exemptPaths = parseSlotListValue(rawValue); } },
   '--exempt-reason': { needsValue: true, apply: (target, rawValue) => { target.exemptReason = rawValue; } },
+  // 拦截清单 message 截断：默认紧凑（80 字符，供门禁指路）；报告形态显式要完整
+  '--no-compact': { needsValue: false, apply: (target) => { target.compact = false; } },
+  '--compact': { needsValue: false, apply: (target) => { target.compact = true; } },
   '--blockers-only': { needsValue: false, apply: (target) => { target.blockersOnly = true; } },
   '--json': { needsValue: false, apply: (target) => { target.json = true; } },
 };
@@ -146,6 +149,7 @@ export function parseGateArgs(argv = []) {
     visibility: 'unknown',
     exemptPaths: [],
     exemptReason: '',
+    compact: true,
     json: false,
   };
   for (let cursor = 0; cursor < argv.length; cursor += 1) {
@@ -179,6 +183,7 @@ export async function runGateAudit(opts) {
     repoPath: opts.repo,
     scope: opts.scope,
     visibility: opts.visibility,
+    compact: opts.compact,
     exemptPaths: opts.exemptPaths,
     exemptReason: opts.exemptReason,
     rulesetDir: opts.rulesetDir,
@@ -197,6 +202,7 @@ export async function runGateAudit(opts) {
     summary: result.summary,
     quality: result.quality,
     blocked: result.blocked,
+    sampleExemptCount: result.sampleExemptCount,
     ...(result.exempt ? { exempt: result.exempt } : {}),
     ...(result.privateExempt ? { privateExempt: result.privateExempt } : {}),
     findings,

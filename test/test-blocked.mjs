@@ -87,6 +87,22 @@ test('② summary.blocker（引擎原始数）与 blocked（豁免后结论）�
   assert.notEqual(rawBlockerCount, verdict.blocked.length, '两者刻意不同：合并会同时毁掉可观测性与豁免语义');
 });
 
+test('compact 开关：默认截断 80；compact:false 返回完整 message（门禁紧凑 / 报告完整，两种用途不同口径）', () => {
+  const longMessage = '很长的消息'.repeat(40);
+  const findings = [blocker({ message: longMessage })];
+  const compact = computeBlocked(findings, { repoPath: '.', visibility: 'public' });
+  assert.equal(compact.blocked[0].message.length, MAX_MSG_PREVIEW, '默认（门禁用）应截断');
+  const full = computeBlocked(findings, { repoPath: '.', visibility: 'public', compact: false });
+  assert.equal(full.blocked[0].message, longMessage, 'compact:false 应返回完整 message');
+  assert.ok(full.blocked[0].message.length > MAX_MSG_PREVIEW);
+});
+
+test('sampleExemptCount：示例目录豁免条数对外可见（解释「36 个 blocker 只拦 29 个」）', () => {
+  const verdict = computeBlocked([blocker(), warning()], { repoPath: '.', visibility: 'public' });
+  assert.equal(verdict.sampleExemptCount, 0, '无示例目录豁免时为 0（字段必须存在，不能 undefined）');
+  assert.equal(typeof verdict.sampleExemptCount, 'number');
+});
+
 test('边界：路径归一化与空输入', () => {
   assert.equal(normalizeExemptPath('./src\\a.js'), 'src/a.js');
   assert.equal(normalizeExemptPath('  src/b.js  '), 'src/b.js');

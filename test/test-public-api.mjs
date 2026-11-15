@@ -61,7 +61,7 @@ test('② manifest 形状符合契约：endpoints 五条 + actions 含 audit/man
   assert.deepEqual(actionNames, ['audit', 'manifest']);
   const auditAction = manifest.actions[0];
   const flags = auditAction.params.map((param) => param.flag);
-  for (const required of ['repo', 'scope', 'visibility', 'exemptPaths', 'exemptReason', 'rulesetDir', 'weights', 'json']) {
+  for (const required of ['repo', 'scope', 'visibility', 'exemptPaths', 'exemptReason', 'rulesetDir', 'weights', 'compact', 'json']) {
     assert.ok(flags.includes(required), `audit 动作声明缺参数 ${required}`);
   }
   // 深拷贝：改返回值不能污染共享常量
@@ -81,9 +81,10 @@ test('④ library 接口可 import 并返回契约字段（含 blocked / exempt�
   const dir = makeBlockerRepo();
   try {
     const result = await audit({ repoPath: dir, scope: 'full', visibility: 'public', exemptPaths: ['README.md'], exemptReason: '样本' });
-    for (const key of ['ok', 'scope', 'summary', 'quality', 'findings', 'blocked', 'files', 'engine']) {
+    for (const key of ['ok', 'scope', 'summary', 'quality', 'findings', 'blocked', 'sampleExemptCount', 'files', 'engine']) {
       assert.ok(key in result, `library 返回缺字段 ${key}`);
     }
+    assert.equal(typeof result.sampleExemptCount, 'number', 'sampleExemptCount 必须是数字（解释 blocker 与 blocked 差值）');
     assert.equal(result.ok, false, '有 blocker 应 ok:false');
     assert.ok(result.blocked.length >= 1, 'blocked 应非空');
     assert.equal(typeof result.summary.blocker, 'number', 'summary 是引擎原始统计');
@@ -156,6 +157,7 @@ test('③ CLI 实跑：exit 0/1/2 三态 + stdout 单行 JSON', () => {
     const blockedJson = JSON.parse(blockedRun.stdout.trim());
     assert.equal(blockedJson.ok, false);
     assert.ok(Array.isArray(blockedJson.blocked) && blockedJson.blocked.length >= 1, 'CLI 输出必须含 blocked 结论');
+    assert.equal(typeof blockedJson.sampleExemptCount, 'number', 'CLI 输出必须带 sampleExemptCount');
 
     // 私有库：CLI 也要给 ok:true + privateExempt
     const privateRun = runCli(['--repo', dir, '--scope', 'full', '--visibility', 'private', '--json']);
