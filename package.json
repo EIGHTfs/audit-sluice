@@ -1,0 +1,36 @@
+{
+  "name": "audit-sluice",
+  "version": "0.1.0",
+  "description": "代码审计 CLI：规则驱动 + AST/正则检查 + 评分 + 豁免（零配置可跑，输出单行 JSON 契约）",
+  "type": "module",
+  "bin": {
+    "audit-sluice": "./cli.mjs"
+  },
+  "exports": {
+    ".": "./lib/engine/public.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "cli.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "js-yaml": "4.1.0",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.25.10"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "scripts": {
+    "audit": "node cli.mjs --scope full --json",
+    "test": "node --test test/",
+    "doc-tree": "node scripts/doc-tree.mjs apply",
+    "doc-func": "node scripts/doc-func.mjs apply"
+  }
+}
