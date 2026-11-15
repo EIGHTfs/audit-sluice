@@ -40,6 +40,7 @@ import { score as scoreWithSpec } from './lib/preprocess/score.js';
 import { runPreprocess } from './lib/preprocess/index.js';
 // 对外门面（library 形态）：本 CLI 直接复用它，保证「CLI 与 library 同一个实现」。
 import { audit as auditLibrary, AuditInputError, getPreprocessManifest } from './lib/index.js';
+import { exemptAction, ioScan, linkCheck, scopeCheck } from './lib/actions.js';
 
 /** 退出码语义（任何语言都能实现 exit 0/1/2，比让调用方解析 JSON 猜语义可靠）。 */
 export const EXIT_OK = 0;
@@ -230,7 +231,72 @@ function emitAndExit(result, exitCode) {
 }
 
 /** 已知子命令。无子命令时默认 audit（兼容批 A 的 `cli.mjs --repo ...` 写法）。 */
-export const SUBCOMMANDS = ['audit', 'manifest'];
+export const SUBCOMMANDS = ['audit', 'manifest', 'io_scan', 'link_check', 'scope_check', 'exempt_hint'];
+
+/**
+ * 按需查询类子命令的参数分派表（键=参数名，值=落到对象上的字段与取值方式）。
+ * 与 audit 的 `GATE_FLAG_SPECS` 分开：这些 action 没有 scope/weights 之类概念，
+ *   混进一张表会让「某个 flag 对某个子命令其实无效」变得看不出来。
+ */
+const ACTION_FLAG_SPECS = {
+  '--repo': { key: 'repo', needsValue: true },
+  '--path': { key: 'path', needsValue: true },
+  '--files': { key: 'files', needsValue: true },
+  '--prefix': { key: 'prefix', needsValue: true },
+  '--allowlist': { key: 'allowlist', needsValue: true },
+  '--write-only': { key: 'writeOnly', needsValue: false, value: true },
+  '--top-level-must-be-empty': { key: 'topLevelMustBeEmpty', needsValue: false, value: true },
+  '--action': { key: 'action', needsValue: true },
+  '--line': { key: 'line', needsValue: true },
+  '--scope': { key: 'scope', needsValue: true },
+  '--rule': { key: 'rule', needsValue: true },
+  '--marker': { key: 'marker', needsValue: true },
+  '--reason': { key: 'reason', needsValue: true },
+  '--dry-run': { key: 'dryRun', needsValue: false, value: true },
+  '--json': { key: 'json', needsValue: false, value: true },
+};
+
+/** 解析按需查询类子命令参数（未知参数报错，不做静默忽略）。 */
+export function parseActionArgs(argv = []) {
+  const target = { json: false };
+  for (let cursor = 0; cursor < argv.length; cursor += 1) {
+    const flagName = argv[cursor];
+    const spec = ACTION_FLAG_SPECS[flagName];
+    if (!spec) throw new GateUsageError(`不认识的参数：${flagName}`);
+    if (!spec.needsValue) { target[spec.key] = spec.value; continue; }
+    const value = argv[cursor + 1];
+    if (value === undefined) throw new GateUsageError(`参数 ${flagName} 缺少取值`);
+    cursor += 1;
+    target[spec.key] = spec.key === 'line' ? Number(value) : value;
+  }
+  return target;
+}
+
+/** 按需查询类子命令分派。返回值即 action 的结果对象。 */
+async function runAction(command, options) {
+  if (command === 'io_scan') return ioScan({ root: options.repo || '', writeOnly: options.writeOnly === true });
+  if (command === 'link_check') return linkCheck({ path: options.path || '' });
+  if (command === 'scope_check') {
+    return scopeCheck({
+      repo: options.repo || '',
+      files: options.files || '',
+      prefix: options.prefix || '',
+      allowlist: options.allowlist || '',
+      ...(options.topLevelMustBeEmpty === true ? { topLevelMustBeEmpty: true } : {}),
+    });
+  }
+  return exemptAction({
+    action: options.action || '',
+    repo: options.repo || '',
+    path: options.path || '',
+    line: options.line,
+    scope: options.scope || '',
+    rule: options.rule || '',
+    marker: options.marker || '',
+    reason: options.reason || '',
+    dryRun: options.dryRun === true,
+  });
+}
 
 /** 供测试直接调用：解析子命令，返回 { command, argv }。 */
 export function parseSubcommand(argv = []) {
@@ -259,6 +325,30 @@ async function main(rawArgv) {
       return EXIT_OK;
     }
     return EXIT_OK;
+  }
+
+  // 按需查询类子命令：跑一个 action 就直接输出（不涉及评分/拦截，退出码 0/2）
+  if (command !== 'audit') {
+    let actionOptions;
+    try {
+      actionOptions = parseActionArgs(argv);
+    } catch (e) {
+      process.stderr.write(`参数错误：${e.message}\n`);
+      return EXIT_FAILED;
+    }
+    let actionResult;
+    try {
+      actionResult = await runAction(command, actionOptions);
+    } catch (e) {
+      process.stderr.write(`执行失败（${command}）：${e?.stack || e}\n`);
+      return EXIT_FAILED;
+    }
+    if (actionOptions.json) {
+      process.stdout.write(`${JSON.stringify(actionResult)}\n`);
+    } else {
+      process.stdout.write(`${JSON.stringify(actionResult, null, 2)}\n`);
+    }
+    return actionResult?.ok === false ? EXIT_FAILED : EXIT_OK;
   }
 
   let opts;

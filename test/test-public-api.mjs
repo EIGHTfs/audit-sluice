@@ -58,7 +58,8 @@ test('② manifest 形状符合契约：endpoints 五条 + actions 含 audit/man
   ], '端点清单就是宿主该挂的五条（顺序固定，便于宿主比对）');
   for (const endpoint of manifest.endpoints) assert.ok(endpoint.desc, `端点 ${endpoint.path} 缺描述`);
   const actionNames = manifest.actions.map((action) => action.action);
-  assert.deepEqual(actionNames, ['audit', 'manifest']);
+  // 批 D1 后清单扩容：审计/报告 + 四个按需查询能力 + 自描述
+  assert.deepEqual(actionNames, ['audit', 'io_scan', 'link_check', 'scope_check', 'exempt_hint', 'manifest']);
   const auditAction = manifest.actions[0];
   const flags = auditAction.params.map((param) => param.flag);
   for (const required of ['repo', 'scope', 'visibility', 'exemptPaths', 'exemptReason', 'rulesetDir', 'weights', 'compact', 'json']) {
