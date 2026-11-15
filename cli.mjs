@@ -38,6 +38,8 @@ import { score as scoreWithSpec } from './lib/preprocess/score.js';
 // 统一入口：引擎（adapter）→ 豁免编排 → 交中间层算分。本入口不再直接调 auditWithScope，
 // 也不再自己决定「引擎是谁」——换引擎只换 adapter。
 import { runPreprocess } from './lib/preprocess/index.js';
+// 对外门面（library 形态）：本 CLI 直接复用它，保证「CLI 与 library 同一个实现」。
+import { audit as auditLibrary, AuditInputError, getPreprocessManifest } from './lib/index.js';
 
 /** 退出码语义（任何语言都能实现 exit 0/1/2，比让调用方解析 JSON 猜语义可靠）。 */
 export const EXIT_OK = 0;
@@ -95,6 +97,16 @@ function parseSlotListValue(rawValue) {
 }
 
 /**
+ * `--visibility`：**只接受三值**，`unknown` 与 `public` 同口径（保守拦截）。
+ * 拼错（如 `privte`）必须报错而不是当成 unknown —— 否则「以为设了 private、其实在按 public 拦」。
+ */
+function parseVisibilityValue(rawValue) {
+  const allowed = ['private', 'public', 'unknown'];
+  if (!allowed.includes(rawValue)) throw new GateUsageError(`--visibility 只接受 ${allowed.join('|')}，收到：${rawValue}`);
+  return rawValue;
+}
+
+/**
  * 参数分派表：键是参数名，值是「要不要取值 + 怎么落到解析结果上」。
  * 未知参数一律报错（不做静默忽略）——拼错的参数被忽略，等于门禁悄悄少传一项设置。
  */
@@ -106,6 +118,10 @@ const GATE_FLAG_SPECS = {
   '--max-scan-files': { needsValue: true, apply: (target, rawValue) => { target.maxScanFiles = parseMaxScanFilesValue(rawValue); } },
   '--disabled-slots': { needsValue: true, apply: (target, rawValue) => { target.disabledSlots = parseSlotListValue(rawValue); } },
   '--slots': { needsValue: true, apply: (target, rawValue) => { target.slots = parseSlotListValue(rawValue); } },
+  '--visibility': { needsValue: true, apply: (target, rawValue) => { target.visibility = parseVisibilityValue(rawValue); } },
+  // 本次临时豁免（逗号分隔）：传入后由本包自己过滤，语义「豁免即豁免，含 blocker」
+  '--exempt-paths': { needsValue: true, apply: (target, rawValue) => { target.exemptPaths = parseSlotListValue(rawValue); } },
+  '--exempt-reason': { needsValue: true, apply: (target, rawValue) => { target.exemptReason = rawValue; } },
   '--blockers-only': { needsValue: false, apply: (target) => { target.blockersOnly = true; } },
   '--json': { needsValue: false, apply: (target) => { target.json = true; } },
 };
@@ -126,6 +142,10 @@ export function parseGateArgs(argv = []) {
     disabledSlots: [],
     slots: [],
     blockersOnly: false,
+    // 缺省 unknown ⇒ 与 public 同口径（保守拦截）；只有明确 private 才只报告不拦截
+    visibility: 'unknown',
+    exemptPaths: [],
+    exemptReason: '',
     json: false,
   };
   for (let cursor = 0; cursor < argv.length; cursor += 1) {
@@ -153,31 +173,36 @@ export function parseGateArgs(argv = []) {
  * @returns {Promise<{ok: boolean, scope: string, summary: object, quality: object, findings: object[], files: number}>}
  */
 export async function runGateAudit(opts) {
-  const pre = await runPreprocess(opts.repo, {
+  // 统一走 library 门面：CLI / library / manifest 三形态必须同一份实现，
+  //   否则「CLI 判的和 library 判的不一样」这种分裂最难发现。
+  const result = await auditLibrary({
+    repoPath: opts.repo,
     scope: opts.scope,
-    maxScanFiles: opts.maxScanFiles,
+    visibility: opts.visibility,
+    exemptPaths: opts.exemptPaths,
+    exemptReason: opts.exemptReason,
     rulesetDir: opts.rulesetDir,
-    // 空数组与 undefined 在加载层同义（都用默认偏好顺序），显式给 undefined 更贴合旧行为
+    weights: opts.weights,
+    maxScanFiles: opts.maxScanFiles,
     slots: Array.isArray(opts.slots) && opts.slots.length ? opts.slots : undefined,
     disabledSlots: Array.isArray(opts.disabledSlots) ? opts.disabledSlots : [],
   });
-  const auditResult = pre.audit;              // 引擎原始结果（summary / dim*Counts / scope 透传）
-  const scoredFindings = pre.findings;        // 已过中间层豁免编排
-  const quality = scoreWithSpec(scoredFindings, pre.scoreSpec, opts.weights, {
-    files: pre.files,
-    dimFileCounts: auditResult.dimFileCounts,
-    dimRuleCounts: auditResult.dimRuleCounts,
-  });
   const findings = opts.blockersOnly
-    ? scoredFindings.filter((finding) => finding.severity === 'blocker')
-    : scoredFindings;
+    ? result.findings.filter((finding) => finding.severity === 'blocker')
+    : result.findings;
+  // 契约字段顺序固定：ok / scope / summary / quality / blocked / findings / files …
   return {
-    ok: (auditResult.summary?.blocker ?? 0) === 0,
-    scope: auditResult.scope,
-    summary: auditResult.summary,
-    quality,
+    ok: result.ok,
+    scope: result.scope,
+    summary: result.summary,
+    quality: result.quality,
+    blocked: result.blocked,
+    ...(result.exempt ? { exempt: result.exempt } : {}),
+    ...(result.privateExempt ? { privateExempt: result.privateExempt } : {}),
     findings,
-    files: auditResult.files,
+    files: result.files,
+    engine: result.engine,
+    ...(result.specFallback ? { specFallback: true, specFallbackReason: result.specFallbackReason } : {}),
   };
 }
 
@@ -198,8 +223,38 @@ function emitAndExit(result, exitCode) {
   process.stdout.write(payload, () => { process.exit(exitCode); });
 }
 
-/** 入口：解析 → 审计 → 输出 → 定退出码。 */
-async function main(argv) {
+/** 已知子命令。无子命令时默认 audit（兼容批 A 的 `cli.mjs --repo ...` 写法）。 */
+export const SUBCOMMANDS = ['audit', 'manifest'];
+
+/** 供测试直接调用：解析子命令，返回 { command, argv }。 */
+export function parseSubcommand(argv = []) {
+  const first = argv[0];
+  if (SUBCOMMANDS.includes(first)) return { command: first, argv: argv.slice(1) };
+  return { command: 'audit', argv };
+}
+
+/** 入口：解析 → 执行 → 输出 → 定退出码。 */
+async function main(rawArgv) {
+  const { command, argv } = parseSubcommand(rawArgv);
+
+  // `manifest --json`：把清单写出来就结束（宿主据此挂路由，不需要跑审计）
+  if (command === 'manifest') {
+    const payload = getPreprocessManifest();
+    if (argv.includes('--json')) emitAndExit(payload, EXIT_OK);
+    else {
+      const lines = [
+        `${payload.label}（${payload.id}）v${payload.version}`,
+        '端点：',
+        ...payload.endpoints.map((endpoint) => `  ${endpoint.method} ${endpoint.path} — ${endpoint.desc}`),
+        '动作：',
+        ...payload.actions.map((action) => `  ${action.action} — ${action.desc}`),
+      ];
+      process.stdout.write(lines.join('\n') + '\n');
+      return EXIT_OK;
+    }
+    return EXIT_OK;
+  }
+
   let opts;
   try {
     opts = parseGateArgs(argv);
@@ -207,18 +262,25 @@ async function main(argv) {
     process.stderr.write(`${e.name === 'GateUsageError' ? '参数错误' : '内部错误'}：${e.message}\n`);
     return EXIT_FAILED;
   }
+
   const restoreStdout = muteStdout();
   let gateAuditResult;
   try {
     gateAuditResult = await runGateAudit(opts);
   } catch (e) {
+    // 输入错误（路径不存在 / 不是目录）单独给一行清晰提示：
+    //   独立 CLI 是被外部调用的，传错路径返回成功 = 静默放行（比报错危险得多）。
+    if (e instanceof AuditInputError) {
+      restoreStdout();
+      process.stderr.write(`参数错误：${e.message}\n`);
+      return EXIT_FAILED;
+    }
     process.stderr.write(`审计执行失败（repo=${opts.repo} scope=${opts.scope}）：${e?.stack || e}\n`);
     return EXIT_FAILED;
   } finally {
     restoreStdout();
   }
   emitAndExit(gateAuditResult, gateAuditResult.ok ? EXIT_OK : EXIT_BLOCKED);
-  // emitAndExit 内部已注册退出，这里返回一个占位码保持函数语义完整
   return gateAuditResult.ok ? EXIT_OK : EXIT_BLOCKED;
 }
 

@@ -6,18 +6,42 @@
 ## 用法
 
 ```bash
-# 全量审计（stdout 一行 JSON；有 blocker ⇒ exit 1，执行失败 ⇒ exit 2）
-node cli.mjs --repo /path/to/repo --scope full --json
+# 审计（子命令可省略：`audit-sluice --repo .` 等价于 `audit-sluice audit --repo .`）
+audit-sluice audit --repo /path/to/repo --scope full --json
+audit-sluice audit --repo . --scope diff --json
 
-# 只看改动集
-node cli.mjs --repo /path/to/repo --scope diff --json
+# 私有库：只报告不拦截（blocked 为空，privateExempt 里带「本来会拦几条」）
+audit-sluice audit --repo . --scope full --visibility private --json
+
+# 本次临时豁免（仅本次、不落盘；豁免即豁免，含 blocker）
+audit-sluice audit --repo . --scope full --exempt-paths src/gen.js,dist/bundle.js --exempt-reason "生成产物" --json
+
+# 预处理清单（宿主据此挂路由 / 注册工具）
+audit-sluice manifest --json
 ```
 
-安装后（`npm i -g audit-sluice` 或 `npx audit-sluice`）：
+| 参数 | 说明 |
+|---|---|
+| `--repo <path>` | 仓库绝对路径（**必填**；不存在或不是目录 ⇒ exit 2） |
+| `--scope diff\|full` | 审计范围（默认 `diff`） |
+| `--visibility private\|public\|unknown` | 默认 `unknown`：**与 public 同口径（保守拦截）**；只有明确 `private` 才只报告不拦截 |
+| `--exempt-paths a,b` | 本次临时豁免的相对路径（逗号分隔） |
+| `--exempt-reason <r>` | 豁免理由（仅回显） |
+| `--ruleset <dir>` / `--weights <json>` | 自定义规则目录 / 维度权重覆盖 |
+| `--json` | stdout 输出单行 JSON 契约 |
 
-```bash
-audit-sluice --repo . --scope full --json
+## library 用法
+
+```js
+import { audit, preprocessManifest } from 'audit-sluice';
+
+const result = await audit({ repoPath: '/path/to/repo', scope: 'full', visibility: 'unknown' });
+// result.blocked 是**豁免后**的拦截结论（门禁依据）；
+// result.summary.blocker 是引擎**原始**计数（问题规模）——两者刻意不同，别合并。
 ```
+
+返回字段：`{ ok, scope, summary, quality, findings, blocked, exempt, privateExempt, files, engine }`。
+`ok` = `blocked.length === 0`（私有库恒 true）。
 
 ## 输出契约
 
@@ -69,3 +93,23 @@ docs/                   设计与说明
 ## 许可
 
 MIT
+
+## 运维备注：在 CIFS 挂载上初始化本仓库
+
+`safe-delete`/`chmod` 受限的 SMB/CIFS 挂载上，直接 `git init` 会失败：
+`chmod on .git/config.lock failed: Operation not permitted`（git 试图给锁文件改权限，被挂载点拒绝）。
+变通做法（已在本机验证）：
+
+```bash
+# ① 在本地盘初始化一个空仓库，再把它的 .git 拷进来
+mkdir -p /tmp/as-init && git -C /tmp/as-init init -q
+cp -r /tmp/as-init/.git <本项目>/.git
+
+# ② 让 git 信任该目录（否则报 dubious ownership）
+git config --global --add safe.directory <本项目绝对路径>
+
+# ③ 验证
+git -C <本项目> status --short
+```
+
+`node_modules/` 已在 `.gitignore` 中（依赖用 `npm i` 或从同机已有副本复制，**不入库**）。
