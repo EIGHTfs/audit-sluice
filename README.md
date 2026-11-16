@@ -18,6 +18,11 @@ audit-sluice audit --repo . --scope full --exempt-paths src/gen.js,dist/bundle.j
 
 # 预处理清单（宿主据此挂路由 / 注册工具）
 audit-sluice manifest --json
+
+# 本包自己的配置（扫描范围 / 文件上限 / 禁用规则包 / 权重覆盖）
+audit-sluice config            # 看生效值、来源与被忽略的键
+audit-sluice config --json     # 机器可读
+audit-sluice config --migrate  # 把宿主遗留配置里的审计项落盘到本包配置
 ```
 
 | 参数 | 说明 |
@@ -29,6 +34,34 @@ audit-sluice manifest --json
 | `--exempt-reason <r>` | 豁免理由（仅回显） |
 | `--ruleset <dir>` / `--weights <json>` | 自定义规则目录 / 维度权重覆盖 |
 | `--json` | stdout 输出单行 JSON 契约 |
+| `--max-scan-files <n>` | 全量扫描文件上限（0=不限；默认取配置，缺省 3000） |
+| `--disabled-slots a,b` | 本次禁用这些规则包（默认取配置） |
+| `--slots a,b` | 只用这些规则包（显式白名单，默认不限定） |
+
+## 配置（本包自己的一份）
+
+「怎么审」由本包自己的配置决定，不依赖宿主：
+
+```bash
+# 位置（首个存在者生效）：
+#   1. $AUDIT_SLUICE_HOME/config.json
+#   2. $DSH_HOME/audit-sluice/config.json
+#   3. ~/.audit-sluice/config.json
+audit-sluice config --json
+```
+
+```json
+{
+  "scanScope": "diff",
+  "maxScanFiles": 3000,
+  "disabledSlots": ["i18n"],
+  "weightOverrides": { "安全性": 100 }
+}
+```
+
+优先级：**命令行参数 > 配置文件 > 内置默认**。
+旧版宿主配置（`$DSH_HOME/git-push/config.json`）里的审计项在**本包没配该项时**作为兜底读取，
+并在 `config` 输出里标出来源；`config --migrate` 把它落到本包配置（不动宿主配置文件）。
 
 ## library 用法
 
@@ -75,8 +108,8 @@ lib/                    被 import 的库代码（无构建）
 ├── preprocess/         中间层：引擎适配器 / 豁免编排 / 评分编排 / 结果文案
 ├── lint-adapter/       外部 lint 工具适配
 ├── link-check/         链接检查
-├── ui-sdk/             审计面板注入契约（供 UI 侧实现）
-└── core/               配置 / 凭据 / 进程执行等基础设施
+├── config/             本包自己的配置（扫描范围 / 文件上限 / 禁用规则包 / 权重覆盖）
+└── core/               git 进程执行与包根定位
 scripts/                本项目自己的脚本（文档树 / 函数索引生成）
 test/                   测试 + fixtures
 docs/                   设计与说明
@@ -116,6 +149,19 @@ git -C <本项目> status --short
 
 <!-- dshgp-functions:start -->
 ## 函数列表
+
+### lib/actions.js（232 行 · 8 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `readTextSafe` | 31-33 | 3 | `function readTextSafe(path = '') {` |
+| `splitList` | 36-38 | 3 | `function splitList(value) {` |
+| `auditReport` | 63-117 | 55 | `export async function auditReport({` |
+| `auditHistory` | 126-133 | 8 | `export async function auditHistory({ repo = '', since = '', until = '', outDir = '', auditOpts = {}, weights = {} } = {}) {` |
+| `ioScan` | 143-151 | 9 | `export async function ioScan({ root = '', writeOnly = false } = {}) {` |
+| `linkCheck` | 158-162 | 5 | `export async function linkCheck({ path = '' } = {}) {` |
+| `scopeCheck` | 172-208 | 37 | `export function scopeCheck({ repo = '', files = '', prefix = '', allowlist = [], topLevelMustBeEmpty } = {}) {` |
+| `exemptAction` | 218-231 | 14 | `export async function exemptAction({` |
 
 ### lib/ast/brace.js（121 行 · 6 个函数）
 
@@ -460,6 +506,22 @@ git -C <本项目> status --short
 | `computeBlocked` | 63-120 | 58 | `export function computeBlocked(findings = [], opts = {}) {` |
 | `isExemptFile` | 66-66 | 1 | `const isExemptFile = (finding) => exemptSet.size > 0 && exemptSet.has(normalizeExemptPath(finding.file));` |
 
+### lib/capabilities.js（156 行 · 11 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `ruleSlotStats` | 37-44 | 8 | `function ruleSlotStats(loaded) {` |
+| `listRuleSlots` | 47-81 | 35 | `export function listRuleSlots(order, disabledSlots, hitStats = null) {` |
+| `ruleDetail` | 84-86 | 3 | `export function ruleDetail(slot) {` |
+| `toggleRule` | 89-91 | 3 | `export function toggleRule(slot, disabled) {` |
+| `auditAggregate` | 98-125 | 28 | `export async function auditAggregate(options = {}) {` |
+| `auditParams` | 128-130 | 3 | `export function auditParams(cfg = {}, hasBuiltinEngine) {` |
+| `renderAuditResult` | 133-135 | 3 | `export function renderAuditResult(ctx = {}, cfg = {}) {` |
+| `exemptMarkerKeys` | 138-140 | 3 | `export function exemptMarkerKeys() {` |
+| `isReadableTextFile` | 143-145 | 3 | `export function isReadableTextFile(path = '') {` |
+| `defaultReportDir` | 148-150 | 3 | `export function defaultReportDir(repo = '') {` |
+| `readTextIfPossible` | 153-155 | 3 | `export function readTextIfPossible(path = '') {` |
+
 ### lib/checks/button-bind.js（348 行 · 4 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
@@ -629,6 +691,18 @@ git -C <本项目> status --short
 | `checkCommentDensity` | 239-254 | 16 | `export function checkCommentDensity({ file, text, rules }) {` |
 | `checkRepeated` | 257-281 | 25 | `export function checkRepeated({ file, text, rules }) {` |
 
+### lib/config/load.js（175 行 · 7 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `configDirCandidates` | 56-64 | 9 | `export function configDirCandidates({ env = process.env, home = '' } = {}) {` |
+| `resolveConfigFile` | 71-77 | 7 | `export function resolveConfigFile({ env = process.env, home = '' } = {}) {` |
+| `configWriteTarget` | 80-83 | 4 | `export function configWriteTarget({ env = process.env, home = '' } = {}) {` |
+| `legacyHostConfigFile` | 86-89 | 4 | `export function legacyHostConfigFile({ env = process.env } = {}) {` |
+| `readJsonSafe` | 91-99 | 9 | `function readJsonSafe(file) {` |
+| `sanitize` | 108-134 | 27 | `function sanitize(raw, sourceLabel, notes) {` |
+| `loadConfig` | 141-174 | 34 | `export function loadConfig({ env = process.env, home = '' } = {}) {` |
+
 ### lib/core/atomic-json.js（99 行 · 5 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
@@ -639,70 +713,14 @@ git -C <本项目> status --short
 | `updateJsonAtomic` | 72-76 | 5 | `export function updateJsonAtomic(file, updater, { mode = 0o600 } = {}) {` |
 | `writeTextAtomic` | 86-98 | 13 | `export function writeTextAtomic(file, text, { mode = 0o600 } = {}) {` |
 
-### lib/core/config.js（41 行 · 1 个函数）
+### lib/core/exec.js（125 行 · 4 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
 |------|------|------|------|
-| `loadRequirements` | 23-40 | 18 | `export function loadRequirements() {` |
-
-### lib/core/credentials.js（275 行 · 13 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `credentialsDir` | 27-32 | 6 | `export function credentialsDir({ workspaceRoot = '' } = {}) {` |
-| `ensureCredentialsDir` | 35-39 | 5 | `function ensureCredentialsDir(workspaceRoot) {` |
-| `resolveSshKeys` | 47-57 | 11 | `export function resolveSshKeys({ workspaceRoot = '' } = {}) {` |
-| `resolveSshKey` | 60-69 | 10 | `export function resolveSshKey({ workspaceRoot = '' } = {}) {` |
-| `resolveToken` | 82-110 | 29 | `export function resolveToken({ token = '', tokenPath = '', repoPath = '', workspaceRoot = '' } = {}) {` |
-| `maskToken` | 115-119 | 5 | `export function maskToken(token = '') {` |
-| `readSshPub` | 122-134 | 13 | `export function readSshPub({ workspaceRoot = '' } = {}) {` |
-| `isMaskedValue` | 140-143 | 4 | `export function isMaskedValue(v = '') {` |
-| `persistGithubToken` | 153-164 | 12 | `export function persistGithubToken(token, { workspaceRoot = '' } = {}) {` |
-| `persistSshPub` | 173-186 | 14 | `export function persistSshPub(pub, { workspaceRoot = '' } = {}) {` |
-| `persistNpmToken` | 199-210 | 12 | `export function persistNpmToken(token, { workspaceRoot = '' } = {}) {` |
-| `readNpmToken` | 217-226 | 10 | `export function readNpmToken({ workspaceRoot = '' } = {}) {` |
-| `generateSshKey` | 235-274 | 40 | `export function generateSshKey(email, { workspaceRoot = '', force = false } = {}) {` |
-
-### lib/core/endpoints.js（120 行 · 6 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `mirrorPrefix` | 32-45 | 14 | `export function mirrorPrefix() {` |
-| `withMirror` | 66-75 | 10 | `export function withMirror(url, { method = 'GET', mode = 'read', noMirror = false } = {}) {` |
-| `mirrorGitConfigEnv` | 88-97 | 10 | `export function mirrorGitConfigEnv(env, { mode = 'read' } = {}) {` |
-| `blobApiUrl` | 107-109 | 3 | `export function blobApiUrl(owner, repo, sha) {` |
-| `contentsApiUrl` | 112-114 | 3 | `export function contentsApiUrl(owner, repo, encodedPath, encodedRef) {` |
-| `rawFileUrl` | 117-119 | 3 | `export function rawFileUrl(owner, repo, encodedRef, encodedPath) {` |
-
-### lib/core/exec.js（273 行 · 9 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `gitSearchPlan` | 44-51 | 8 | `export function gitSearchPlan(pathValue, { delimiter = pathDelimiter, platform = process.platform } = {}) {` |
-| `resolveGitBin` | 54-71 | 18 | `export function resolveGitBin() {` |
-| `runGit` | 87-109 | 23 | `export function runGit(args, { cwd = '', timeoutMs = 120_000, env = {}, noMirror = false } = {}) {` |
-| `gitRaw` | 117-133 | 17 | `export function gitRaw(args, { cwd = '', timeoutMs = 600_000 } = {}) {` |
-| `runGitAsync` | 143-164 | 22 | `export function runGitAsync(args, { cwd = '', timeoutMs = 120_000, env = {}, noMirror = false } = {}) {` |
-| `runGitStream` | 188-272 | 85 | `export function runGitStream(args, { cwd = '', env = {}, noMirror = false, stallMs, onProgress } = {}) {` |
-| `feed` | 222-237 | 16 | `const feed = (chunk, isErr) => {` |
-| `signal` | 243-250 | 8 | `const signal = (sig) => {` |
-| `finish` | 259-268 | 10 | `const finish = (code, errMsg) => {` |
-
-### lib/core/mirror-store.js（244 行 · 11 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `normalizeMirror` | 51-55 | 5 | `export function normalizeMirror(raw) {` |
-| `statePath` | 61-66 | 6 | `export function statePath({ configDir = '' } = {}) {` |
-| `readSeed` | 69-77 | 9 | `export function readSeed(path = SEED_PATH) {` |
-| `readState` | 80-99 | 20 | `export function readState(path = statePath()) {` |
-| `writeState` | 102-111 | 10 | `export function writeState(state, path = statePath()) {` |
-| `listCandidates` | 117-131 | 15 | `export function listCandidates({ seedPath = SEED_PATH, stateFile = statePath() } = {}) {` |
-| `pickMirror` | 134-145 | 12 | `export function pickMirror({ seedPath, stateFile } = {}) {` |
-| `invalidateMirrorCache` | 148-151 | 4 | `export function invalidateMirrorCache() {` |
-| `recordOutcome` | 162-193 | 32 | `export function recordOutcome(mirror, { ok, error = '', stateFile = statePath() } = {}) {` |
-| `probeMirror` | 204-228 | 25 | `export async function probeMirror({` |
-| `probeAll` | 234-243 | 10 | `export async function probeAll({ seedPath, stateFile = statePath(), fetchImpl, timeoutMs, expectedBytes } = {}) {` |
+| `gitSearchPlan` | 46-53 | 8 | `export function gitSearchPlan(pathValue, { delimiter = pathDelimiter, platform = process.platform } = {}) {` |
+| `resolveGitBin` | 56-73 | 18 | `export function resolveGitBin() {` |
+| `runGit` | 84-100 | 17 | `export function runGit(args, { cwd = '', timeoutMs = 120_000, env = {} } = {}) {` |
+| `gitRaw` | 108-124 | 17 | `export function gitRaw(args, { cwd = '', timeoutMs = 600_000 } = {}) {` |
 
 ### lib/engine/analysis-coverage.js（99 行 · 5 个函数）
 
@@ -906,6 +924,14 @@ git -C <本项目> status --short
 | `getBuiltinScoreSpec` | 41-49 | 9 | `export function getBuiltinScoreSpec() {` |
 | `validateScoreSpec` | 59-70 | 12 | `export function validateScoreSpec(scoreSpec) {` |
 
+### lib/engine/slot-stats.js（36 行 · 3 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `setLastSlotHitStats` | 20-25 | 6 | `export function setLastSlotHitStats(stats, repo = '') {` |
+| `getLastSlotHitStats` | 28-30 | 3 | `export function getLastSlotHitStats() {` |
+| `getLastSlotHitMeta` | 33-35 | 3 | `export function getLastSlotHitMeta() {` |
+
 ### lib/engine/slot.js（67 行 · 4 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
@@ -956,13 +982,13 @@ git -C <本项目> status --short
 |------|------|------|------|
 | `installHostDocChecks` | 20-23 | 4 | `export function installHostDocChecks(checks = HOST_DOC_CHECKS) {` |
 
-### lib/index.js（172 行 · 3 个函数）
+### lib/index.js（176 行 · 3 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
 |------|------|------|------|
-| `assertRepoPath` | 56-64 | 9 | `export function assertRepoPath(repoPath) {` |
-| `isInsideGitWorkTree` | 75-82 | 8 | `export function isInsideGitWorkTree(repoPath) {` |
-| `audit` | 103-168 | 66 | `export async function audit(options = {}) {` |
+| `assertRepoPath` | 60-68 | 9 | `export function assertRepoPath(repoPath) {` |
+| `isInsideGitWorkTree` | 79-86 | 8 | `export function isInsideGitWorkTree(repoPath) {` |
+| `audit` | 107-172 | 66 | `export async function audit(options = {}) {` |
 
 ### lib/link-check/index.js（187 行 · 7 个函数）
 
@@ -1006,24 +1032,24 @@ git -C <本项目> status --short
 | `parseRuffJson` | 81-90 | 10 | `function parseRuffJson(stdout) {` |
 | `runLinter` | 98-133 | 36 | `export async function runLinter(linter, repoRoot) {` |
 
-### lib/manifest.js（60 行 · 1 个函数）
+### lib/manifest.js（105 行 · 1 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
 |------|------|------|------|
-| `getPreprocessManifest` | 57-59 | 3 | `export function getPreprocessManifest() {` |
+| `getPreprocessManifest` | 102-104 | 3 | `export function getPreprocessManifest() {` |
 
-### lib/preprocess/adapters/builtin.js（89 行 · 1 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `getAdapter` | 83-88 | 6 | `export function getAdapter(adapterId) {` |
-
-### lib/preprocess/api-guide.js（49 行 · 2 个函数）
+### lib/preprocess/adapters/builtin.js（93 行 · 1 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
 |------|------|------|------|
-| `detectHostIp` | 16-27 | 12 | `function detectHostIp() {` |
-| `buildAuditApiGuide` | 35-48 | 14 | `export function buildAuditApiGuide(repo = '', opts = {}) {` |
+| `getAdapter` | 87-92 | 6 | `export function getAdapter(adapterId) {` |
+
+### lib/preprocess/api-guide.js（72 行 · 2 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `detectHostIp` | 19-30 | 12 | `function detectHostIp() {` |
+| `buildAuditApiGuide` | 39-71 | 33 | `export function buildAuditApiGuide(repo = '', opts = {}) {` |
 
 ### lib/preprocess/audit.js（109 行 · 3 个函数）
 
@@ -1064,6 +1090,13 @@ git -C <本项目> status --short
 | `resolveWeights` | 69-77 | 9 | `export function resolveWeights(scoreSpec, userWeights = {}) {` |
 | `fillMissingDimensions` | 88-96 | 9 | `export function fillMissingDimensions(findings = [], scoreSpec = getBuiltinScoreSpec()) {` |
 | `score` | 108-124 | 17 | `export function score(findings = [], scoreSpec = getBuiltinScoreSpec(), userWeights = {}, context = {}) {` |
+
+### lib/report.js（73 行 · 2 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `exemptStatsOf` | 29-53 | 25 | `export function exemptStatsOf(findings = []) {` |
+| `blockedOf` | 65-72 | 8 | `export function blockedOf(findings = [], { compact = true } = {}) {` |
 
 ### lib/rule/compilers/helpers.js（72 行 · 3 个函数）
 
@@ -1115,6 +1148,13 @@ git -C <本项目> status --short
 | `normalizeScopeRules` | 35-44 | 10 | `export function normalizeScopeRules(rule) {` |
 | `resolveScopeAction` | 52-67 | 16 | `export function resolveScopeAction(scopeRules, scopeInfo = {}) {` |
 
+### lib/scope-check.js（70 行 · 2 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `policyForFile` | 28-30 | 3 | `export function policyForFile(file) {` |
+| `runScopeCheck` | 38-69 | 32 | `export function runScopeCheck({ files = [], prefix = '', allowlist = [], topLevelMustBeEmpty } = {}) {` |
+
 ### lib/score/docs-score.js（166 行 · 5 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
@@ -1162,15 +1202,6 @@ git -C <本项目> status --short
 | `auditRulesDir` | 28-30 | 3 | `export function auditRulesDir() {` |
 | `loadYamlBlacklistDirs` | 38-57 | 20 | `export function loadYamlBlacklistDirs() {` |
 | `getSkipSet` | 63-67 | 5 | `export function getSkipSet() {` |
-
-### lib/ui-sdk/contract.js（118 行 · 4 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `assertMetaShape` | 52-65 | 14 | `function assertMetaShape(meta) {` |
-| `assertRequiredParts` | 72-76 | 5 | `function assertRequiredParts(definition) {` |
-| `assertOptionalParts` | 82-89 | 8 | `function assertOptionalParts(definition) {` |
-| `defineAuditPanel` | 101-117 | 17 | `export function defineAuditPanel(definition) {` |
 
 ### scripts/audit-ext/dsh-inject-declarations.mjs（210 行 · 7 个函数）
 
@@ -1233,12 +1264,88 @@ git -C <本项目> status --short
 | `filesOf` | 402-402 | 1 | `const filesOf = (r) => gitLsFiles(r);` |
 | `mapOf` | 403-403 | 1 | `const mapOf = (r) => loadMapping(r);` |
 
+### scripts/doc-version.mjs（150 行 · 6 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `packageVersionOf` | 40-42 | 3 | `export function packageVersionOf(root) {` |
+| `buildVersionListText` | 46-51 | 6 | `export function buildVersionListText(root, _opts = {}) {` |
+| `findBlock` | 54-59 | 6 | `function findBlock(text) {` |
+| `applyVersionBlock` | 62-66 | 5 | `export function applyVersionBlock(text, newContent) {` |
+| `checkVersionDrift` | 69-77 | 9 | `export function checkVersionDrift({ hostPath, root, versionSource = '' } = {}) {` |
+| `out` | 94-94 | 1 | `const out = (msg) => console.log(msg);` |
+
+### scripts/hot-path-probe.mjs（154 行 · 6 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `readCfg` | 31-37 | 7 | `function readCfg() {` |
+| `report` | 61-77 | 17 | `function report() {` |
+| `initialize` | 88-90 | 3 | `export function initialize(data) {` |
+| `resolve` | 93-102 | 10 | `export async function resolve(specifier, context, next) {` |
+| `load` | 105-153 | 49 | `export async function load(url, context, next) {` |
+| `__wrapped` | 141-145 | 5 | `const __wrapped = function (...__a) {` |
+
+### scripts/scan-file-io.mjs（718 行 · 27 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `isFnSignature` | 116-469 | 354 | `function isFnSignature(s) {` |
+| `stripCommentLines` | 129-153 | 25 | `function stripCommentLines(lines, uptoIdx) {` |
+| `scanEnclosure` | 156-173 | 18 | `function scanEnclosure(lines, lineIdx) {` |
+| `inRequestPath` | 181-194 | 14 | `function inRequestPath(lines, lineIdx) {` |
+| `contextAt` | 197-200 | 4 | `function contextAt(lines, lineIdx) {` |
+| `ioTypeOf` | 203-205 | 3 | `function ioTypeOf(opName = '') {` |
+| `collectFiles` | 213-231 | 19 | `function collectFiles(targets) {` |
+| `walk` | 215-228 | 14 | `const walk = (p) => {` |
+| `isRegexStart` | 248-254 | 7 | `function isRegexStart(out, next) {` |
+| `advanceInsideState` | 268-287 | 20 | `function advanceInsideState(line, i, st) {` |
+| `stripLiterals` | 289-310 | 22 | `function stripLiterals(line) {` |
+| `scanFile` | 316-364 | 49 | `function scanFile(file) {` |
+| `riskOfFallback` | 377-384 | 8 | `function riskOfFallback(entry, ctx) {` |
+| `riskOfByAst` | 397-410 | 14 | `function riskOfByAst(astHits, line, op, entry, ctx) {` |
+| `collectVarAssignments` | 413-427 | 15 | `function collectVarAssignments(lines) {` |
+| `extractArg` | 430-454 | 25 | `function extractArg(line, op, opName) {` |
+| `resolvePathArg` | 457-463 | 7 | `function resolvePathArg(arg, varMap, lineIdx) {` |
+| `tagsOf` | 474-480 | 7 | `function tagsOf(h) {` |
+| `riskMark` | 483-485 | 3 | `function riskMark(risk) {` |
+| `printText` | 492-517 | 26 | `function printText(hits, { writeOnly = false, riskOnly = '', summary = false } = {}) {` |
+| `printJson` | 520-522 | 3 | `function printJson(hits) {` |
+| `main` | 530-580 | 51 | `export function main(argv = process.argv.slice(2)) {` |
+| `splitMulti` | 541-541 | 1 | `const splitMulti = (v) => String(v \|\| '').split(',').map((x) => x.trim()).filter(Boolean);` |
+| `scanFileIo` | 583-604 | 22 | `export function scanFileIo(opts = {}) {` |
+| `summarize` | 607-624 | 18 | `export function summarize(hits) {` |
+| `count` | 608-612 | 5 | `const count = (key) => {` |
+| `printReport` | 636-712 | 77 | `function printReport(hits, opts = {}) {` |
+
 ### scripts/scan-fs-hotspots.mjs（108 行 · 2 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
 |------|------|------|------|
 | `parseArgs` | 31-43 | 13 | `function parseArgs(argv) {` |
 | `collectFiles` | 46-67 | 22 | `function collectFiles(dir, o, out = []) {` |
+
+### scripts/scan-version.mjs（126 行 · 3 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `readmeVersion` | 36-66 | 31 | `export function readmeVersion(text = '') {` |
+| `cmp` | 56-63 | 8 | `const cmp = (a, b) => {` |
+| `main` | 68-123 | 56 | `function main() {` |
+
+### scripts/version-source.mjs（174 行 · 9 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `runGit` | 16-23 | 8 | `function runGit(args, { cwd = '' } = {}) {` |
+| `parseVersion` | 30-34 | 5 | `export function parseVersion(str) {` |
+| `listVersionCommits` | 39-53 | 15 | `export function listVersionCommits(repoPath) {` |
+| `scrubConvWording` | 60-74 | 15 | `export function scrubConvWording(label) {` |
+| `readVersionMetrics` | 85-92 | 8 | `export function readVersionMetrics(repoPath) {` |
+| `detectVersionSource` | 105-110 | 6 | `export function detectVersionSource(root) {` |
+| `projectVersionOf` | 113-123 | 11 | `export function projectVersionOf(root, source = '') {` |
+| `readReleases` | 126-133 | 8 | `export function readReleases(repoPath) {` |
+| `buildReadmeVersionTable` | 151-171 | 21 | `export function buildReadmeVersionTable(repoPath) {` |
 
 ### test/helpers/tmp-dir.mjs（117 行 · 6 个函数）
 
@@ -1250,6 +1357,12 @@ git -C <本项目> status --short
 | `tempDir` | 65-71 | 7 | `export function tempDir(label = 'tmp', { t = null } = {}) {` |
 | `tempRepo` | 79-85 | 7 | `export function tempRepo(label = 'repo', { t = null, name = '', email = '' } = {}) {` |
 | `sweepStaleTempDirs` | 93-116 | 24 | `export function sweepStaleTempDirs({ maxAgeMs = 60 * 60 * 1000, log = null } = {}) {` |
+
+### test/test-actions.mjs（148 行 · 1 个函数）
+
+| 函数 | 行号 | 行数 | 签名 |
+|------|------|------|------|
+| `makeTmp` | 22-23 | 2 | `function makeTmp(prefix) { return mkdtempSync(join(tmpdir(), `as-act-${prefix}-`)); }` |
 
 ### test/test-ast-confirm-span.mjs（61 行 · 1 个函数）
 
@@ -1273,13 +1386,6 @@ git -C <本项目> status --short
 |------|------|------|------|
 | `read` | 36-36 | 1 | `const read = (p) => readFileSync(join(ROOT, p), 'utf8');` |
 | `read` | 325-325 | 1 | `const read = (p) => readFileSync(join(ROOT, p), 'utf8');` |
-
-### test/test-audit-ui-contract.mjs（192 行 · 2 个函数）
-
-| 函数 | 行号 | 行数 | 签名 |
-|------|------|------|------|
-| `makePanel` | 23-29 | 7 | `function makePanel(patch = {}) {` |
-| `assertThrowsWith` | 32-41 | 10 | `function assertThrowsWith(fn, keywords, label) {` |
 
 ### test/test-auditignore.mjs（145 行 · 1 个函数）
 
@@ -1430,7 +1536,7 @@ git -C <本项目> status --short
 |------|------|------|------|
 | `mkRepo` | 17-21 | 5 | `function mkRepo({ name = null } = {}) {` |
 
-### test/test-public-api.mjs（195 行 · 2 个函数）
+### test/test-public-api.mjs（196 行 · 2 个函数）
 
 | 函数 | 行号 | 行数 | 签名 |
 |------|------|------|------|

@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-// 提交前审计引擎 · 轻量门禁入口（不是给人看的 CLI，只服务 commit 门禁）
+// audit-sluice 命令行入口（本包唯一的可执行面：独立 CLI + 宿主门禁入口）
 //
-// 为什么单独开一个入口、不复用 cli.mjs（实测数字决定，别改成"复用更省事"）：
-//   同一仓库、同一 scope、同一台 CIFS 机器上——
-//     进程内直接调审计内核         1.0s
-//     本轻量入口（子进程 + JSON）  1.3s
-//     cli.mjs audit --json         6.4s
-//   多出来的 5.4s 全是 cli.mjs 全家桶的 ESM 模块解析（account/vcs/doc/npm/git 命令族被
-//   一路链式 import 进来），与本次审计无关。门禁每次提交都要跑，不能为此付 5 秒。
-//   所以本文件**只** import 审计内核与评分两层，加任何新的 import 前先量耗时。
+// 三种用法，同一份实现（`lib/index.js` 的门面被 CLI 与 library 共用，避免「CLI 判的和
+// library 判的不一样」这种最难发现的分裂）：
+//   audit-sluice audit --repo <路径> [--scope diff|full] [--json]   审计并按退出码表达结论
+//   audit-sluice manifest [--json]                                   输出端点/动作声明（宿主据此挂路由）
+//   audit-sluice config [--show|--migrate] [--json]                   看/落盘本包自己的配置
+// 另有按需查询动作（io_scan / link_check / scope_check / exempt_hint）。
+//
+// 加载代价是硬约束：本文件**只** import 审计内核、评分中间层与配置层。宿主每次提交都要
+//   跑它，任何把重型命令族（git / 发布 / 文档工具）链式带进来的 import 都会让每次提交
+//   多付几秒 —— 加新 import 前先量耗时。
 //
 // 契约（与实现语言无关，替代引擎照此实现即可）：
 //   stdout : 一行 JSON { ok, scope, summary, quality, findings, files }
@@ -17,17 +19,17 @@
 //   --blockers-only : findings 只留 blocker 级（大仓 4900 条约 3.8MB，门禁未必需要全量）
 //
 // stdout 纯净性：审计过程里任何 console.* / 直接 stdout 写入都被临时改道到 stderr，
-//   最后只由本文件写那一行 JSON。否则调用方 JSON.parse 会被进度噪音打死（历史故障）。
+//   最后只由本文件写那一行 JSON。否则调用方 JSON.parse 会被进度噪音打死。
 //
-// 参数缺省语义（必须与插件默认配置等价，测试钉住）：
-//   --max-scan-files 缺省 = DEFAULT_MAX_SCAN_FILES（3000），**不是 0**
+// 参数缺省语义（**命令行 > 本包配置 > 内置默认**，见 lib/config/load.js）：
+//   --max-scan-files 缺省 = 3000（配置文件可改），**不是 0**
 //     —— capScanFiles 里 0 的含义是「不限」，把缺省当 0 会把大仓全量扫，语义正好相反。
 //   --disabled-slots 缺省 = 不禁用任何槽位。
 //   --slots 缺省 = 不限定规则包（加载层默认偏好顺序）；只在调用方显式给白名单时传。
 
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname, join } from 'node:path';
-import { readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 
 // 版本从 package.json 读：单一真相，避免「代码里一个版本、包里另一个」
 const VERSION = (() => {
@@ -37,10 +39,9 @@ const VERSION = (() => {
   } catch { return '0.0.0'; }
 })();
 
-// 宿主文档漂移检查器接线（导入即安装，幂等）：`lib/audit/**` 不许 import scripts/**，
-//   这两个检查器由宿主入口注入。漏掉这一行会让「目录树漂移 / 函数列表漂移」两类 finding
-//   整类消失（实测同一棵树上少 4 条 finding）——**行为一致性要求本入口必须显式接线**，
-//   与 lib/commit-push.js / cli.mjs 两处宿主入口同款。依赖只有 node 内置模块，几乎零加载代价。
+// 文档漂移检查器接线（导入即安装，幂等）：`lib/engine/**` 不许 import scripts/**，
+//   检查器由入口注入。漏掉这一行会让「目录树漂移 / 函数列表漂移」两类 finding 整类消失，
+//   所以本入口必须显式接线。依赖只有 node 内置模块，几乎零加载代价。
 import './lib/host-doc-checks.js';
 // 评分权在中间层（lib/preprocess/score.js）：本入口只做「跑引擎 + 取 findings」并由中间层算分
 import { score as scoreWithSpec } from './lib/preprocess/score.js';
@@ -50,6 +51,9 @@ import { runPreprocess } from './lib/preprocess/index.js';
 // 对外门面（library 形态）：本 CLI 直接复用它，保证「CLI 与 library 同一个实现」。
 import { audit as auditLibrary, AuditInputError, getPreprocessManifest } from './lib/index.js';
 import { exemptAction, ioScan, linkCheck, scopeCheck } from './lib/actions.js';
+// 本包自己的配置（扫描范围/文件上限/禁用规则包/权重覆盖）——审计配置的唯一归属，
+//   宿主不再替本包保存这些值（见 lib/config/load.js 头部说明）。
+import { loadConfig, configWriteTarget, configDirCandidates, CONFIG_DEFAULTS, resolveConfigFile, CONFIG_KEYS } from './lib/config/load.js';
 
 /** 退出码语义（任何语言都能实现 exit 0/1/2，比让调用方解析 JSON 猜语义可靠）。 */
 export const EXIT_OK = 0;
@@ -57,13 +61,11 @@ export const EXIT_BLOCKED = 1;
 export const EXIT_FAILED = 2;
 
 /**
- * 引擎侧「全量扫描文件数上限」默认值。
- * 单一来源是 lib/app/schema-audit.js 的 DEFAULT_MAX_SCAN_FILES（3000，由 lib/client/index.js
- * 的 MAX_SCAN_FILES_DEFAULT 与之对齐）。本文件不复用那个常量是因为轻量入口不能 import
- * lib/app/ 与 lib/client/（那会把加载代价拉回去）。代价是两处数字必须相等 ——
- * test/test-pre-commit-engine.mjs 用 defaultConfig().maxScanFiles 钉住这条，改一处漏另一处会变红。
+ * 「全量扫描文件数上限」默认值。
+ * 单一来源是 lib/config/load.js 的 CONFIG_DEFAULTS（配置文件可覆盖它）；这里只做转发，
+ *   避免同一个数字在 CLI 与配置层各写一份。
  */
-export const DEFAULT_MAX_SCAN_FILES = 3000;
+export const DEFAULT_MAX_SCAN_FILES = CONFIG_DEFAULTS.maxScanFiles;
 
 /** 参数错误统一用这个错误类型，main 据此输出「用法」而不是「内部异常」。 */
 export class GateUsageError extends Error {
@@ -141,18 +143,23 @@ const GATE_FLAG_SPECS = {
 
 /**
  * 解析命令行参数（纯函数，测试可直接调用，不必起子进程）。
+ *
+ * `defaults` 是本包配置文件里的取值（lib/config/load.js）：**命令行 > 配置文件 > 内置默认**。
+ *   纯函数刻意不自己读盘 —— 读盘失败/路径不同环境差异不能污染参数解析，读一次由调用方传进来。
  * @param {string[]} argv 不含 node 与脚本路径的参数表
+ * @param {{defaults?: object}} [options]
  * @returns {{repo: string, scope: 'diff'|'full', rulesetDir: string, weights: object,
  *   maxScanFiles: number, disabledSlots: string[], slots: string[], blockersOnly: boolean, json: boolean}}
  */
-export function parseGateArgs(argv = []) {
+export function parseGateArgs(argv = [], { defaults = {} } = {}) {
   const target = {
     repo: '',
-    scope: 'diff',
+    // 配置文件给的扫描范围/文件上限/禁用槽位/权重覆盖作为默认值；显式参数在下面覆盖它
+    scope: defaults.scanScope === 'full' ? 'full' : 'diff',
     rulesetDir: '',
-    weights: {},
-    maxScanFiles: DEFAULT_MAX_SCAN_FILES,
-    disabledSlots: [],
+    weights: (defaults.weightOverrides && typeof defaults.weightOverrides === 'object') ? { ...defaults.weightOverrides } : {},
+    maxScanFiles: Number.isFinite(Number(defaults.maxScanFiles)) ? Number(defaults.maxScanFiles) : DEFAULT_MAX_SCAN_FILES,
+    disabledSlots: Array.isArray(defaults.disabledSlots) ? [...defaults.disabledSlots] : [],
     slots: [],
     blockersOnly: false,
     // 缺省 unknown ⇒ 与 public 同口径（保守拦截）；只有明确 private 才只报告不拦截
@@ -240,7 +247,7 @@ function emitAndExit(result, exitCode) {
 }
 
 /** 已知子命令。无子命令时默认 audit（兼容批 A 的 `cli.mjs --repo ...` 写法）。 */
-export const SUBCOMMANDS = ['audit', 'manifest', 'io_scan', 'link_check', 'scope_check', 'exempt_hint'];
+export const SUBCOMMANDS = ['audit', 'manifest', 'config', 'io_scan', 'link_check', 'scope_check', 'exempt_hint'];
 
 /**
  * 按需查询类子命令的参数分派表（键=参数名，值=落到对象上的字段与取值方式）。
@@ -314,6 +321,50 @@ export function parseSubcommand(argv = []) {
   return { command: 'audit', argv };
 }
 
+/**
+ * 生效配置的可读摘要（`config` 子命令；`--json` 给机器读）。
+ *
+ * 为什么要能「看」：配置搬进本包后，用户改的是文件而不是宿主设置页 —— 看不见生效值
+ *   就等于把配置变成不可观测的黑盒（改错了也没线索）。这里把来源、生效值、被忽略的键
+ *   一并列出，排查时不用猜。
+ * @param {{env?:object, home?:string}} [o]
+ * @returns {{report: object}}
+ */
+export function describeConfig({ env = process.env, home = '' } = {}) {
+  const loaded = loadConfig({ env, home });
+  const dirs = configDirCandidates({ env, home });
+  return {
+    report: {
+      ok: true,
+      source: loaded.source,
+      file: resolveConfigFile({ env, home }),
+      candidates: dirs.map((dir) => join(dir, 'config.json')),
+      values: loaded.values,
+      defaults: CONFIG_DEFAULTS,
+      legacyFrom: loaded.legacyFrom,
+      notes: loaded.notes,
+    },
+  };
+}
+
+/**
+ * 把配置落盘（`config --migrate`）：只写本包自己的配置文件，**不动宿主配置**。
+ *
+ * 为什么只写不删：删宿主配置里的旧键属于宿主的配置归属，擅自清理别人的配置文件
+ *   会让宿主那边的历史值直接消失且无从对照。旧键留着不影响本包（本包已配的项优先）。
+ * @param {{env?:object, home?:string}} [o]
+ * @returns {{ok: boolean, file: string, written: object}}
+ */
+export function migrateConfig({ env = process.env, home = '' } = {}) {
+  const loaded = loadConfig({ env, home });
+  const file = configWriteTarget({ env, home });
+  const written = {};
+  for (const key of CONFIG_KEYS) written[key] = loaded.values[key];
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${JSON.stringify(written, null, 2)}\n`, { mode: 0o600 });
+  return { ok: true, file, written };
+}
+
 /** 用法文本（`--help` 用；内容从 SUBCOMMANDS + manifest 声明推导，不手写清单）。 */
 function renderHelp() {
   const manifest = getPreprocessManifest();
@@ -323,6 +374,8 @@ function renderHelp() {
     '用法：',
     '  audit-sluice audit --repo <路径> [--scope diff|full] [--visibility private|public|unknown] [--json]',
     '  audit-sluice manifest [--json]        输出本包声明的端点/动作清单',
+    '  audit-sluice config [--json]          看本包生效配置（扫描范围/文件上限/禁用规则包/权重覆盖）',
+    '  audit-sluice config --migrate         把宿主遗留配置里的审计项落盘到本包配置',
     '  audit-sluice --version                版本',
     '  audit-sluice --help                   本帮助',
     '',
@@ -367,6 +420,41 @@ async function main(rawArgv) {
     return EXIT_OK;
   }
 
+  // `config`：看生效配置 / 落盘迁移（不跑审计）
+  if (command === 'config') {
+    const wantsMigrate = argv.includes('--migrate');
+    const wantsJson = argv.includes('--json');
+    try {
+      if (wantsMigrate) {
+        const migrated = migrateConfig();
+        if (wantsJson) process.stdout.write(`${JSON.stringify(migrated)}\n`);
+        else {
+          process.stdout.write(`已写入本包配置：${migrated.file}\n`);
+          process.stdout.write(`${JSON.stringify(migrated.written, null, 2)}\n`);
+        }
+      } else {
+        const { report } = describeConfig();
+        if (wantsJson) process.stdout.write(`${JSON.stringify(report)}\n`);
+        else {
+          const lines = [
+            `配置文件：${report.file || '(未创建，全部走内置默认)'}`,
+            `来源：${report.source}`,
+            '生效值：',
+            ...CONFIG_KEYS.map((key) => `  ${key} = ${JSON.stringify(report.values[key])}`),
+          ];
+          if (report.legacyFrom) lines.push(`复用宿主遗留配置：${report.legacyFrom}`);
+          if (report.notes.length) lines.push('提示：', ...report.notes.map((note) => `  · ${note}`));
+          lines.push('候选位置：', ...report.candidates.map((candidate) => `  ${candidate}`));
+          process.stdout.write(lines.join('\n') + '\n');
+        }
+      }
+      return EXIT_OK;
+    } catch (e) {
+      process.stderr.write(`配置操作失败：${e?.stack || e}\n`);
+      return EXIT_FAILED;
+    }
+  }
+
   // 按需查询类子命令：跑一个 action 就直接输出（不涉及评分/拦截，退出码 0/2）
   if (command !== 'audit') {
     let actionOptions;
@@ -391,9 +479,13 @@ async function main(rawArgv) {
     return actionResult?.ok === false ? EXIT_FAILED : EXIT_OK;
   }
 
+  // 配置文件只读一次：它的值作为默认值，命令行参数在 parseGateArgs 里覆盖它。
+  //   读盘失败不影响审计（loadConfig 内部吞掉并退回内置默认，notes 里会说明）。
+  const loadedConfig = loadConfig();
+  for (const note of loadedConfig.notes) process.stderr.write(`[config] ${note}\n`);
   let opts;
   try {
-    opts = parseGateArgs(argv);
+    opts = parseGateArgs(argv, { defaults: loadedConfig.values });
   } catch (e) {
     process.stderr.write(`${e.name === 'GateUsageError' ? '参数错误' : '内部错误'}：${e.message}\n`);
     return EXIT_FAILED;
