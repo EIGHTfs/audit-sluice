@@ -118,6 +118,13 @@ docs/                   设计与说明
 **目录判据**：`lib/shared/` 只收「**技术上零依赖且语义上通用**」的文件（拷到别的项目也成立）；
 只满足第一条不算 —— 评分口径、`dsh-skip-*` 标记这类是本项目的约定，留在 `lib/`。
 
+## 文档
+
+- [docs/功能-审计引擎.md](docs/功能-审计引擎.md) — 引擎总览：规则体系、判定流程、评分、外部 linter 委托、豁免通道
+- [docs/功能-审计规则体系.md](docs/功能-审计规则体系.md) — 规则作用域字段与逐条规则说明
+- [docs/DETAILS-EXEMPT-AND-RULES.md](docs/DETAILS-EXEMPT-AND-RULES.md) — 豁免注释与规则 yml 全录
+- [docs/PERF-BASELINE.md](docs/PERF-BASELINE.md) — 性能基线（采集于改造前，目录改名对照见文内说明）
+
 ## 依赖
 
 - `js-yaml`（解析规则包）
