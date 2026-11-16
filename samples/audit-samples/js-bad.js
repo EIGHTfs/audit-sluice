@@ -15,4 +15,4 @@ function deep(x) {
   }
 }
 
-const dbPassword = 'MyS3cretP@ss!';
+// 示例文件：故意保留各类"坏味道"供审计演示；**不放任何看起来像真凭据的字面量**。
