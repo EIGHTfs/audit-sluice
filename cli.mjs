@@ -26,7 +26,16 @@
 //   --slots 缺省 = 不限定规则包（加载层默认偏好顺序）；只在调用方显式给白名单时传。
 
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { readFileSync, realpathSync } from 'node:fs';
+
+// 版本从 package.json 读：单一真相，避免「代码里一个版本、包里另一个」
+const VERSION = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8'));
+    return String(pkg.version || '0.0.0');
+  } catch { return '0.0.0'; }
+})();
 
 // 宿主文档漂移检查器接线（导入即安装，幂等）：`lib/audit/**` 不许 import scripts/**，
 //   这两个检查器由宿主入口注入。漏掉这一行会让「目录树漂移 / 函数列表漂移」两类 finding
@@ -305,8 +314,39 @@ export function parseSubcommand(argv = []) {
   return { command: 'audit', argv };
 }
 
+/** 用法文本（`--help` 用；内容从 SUBCOMMANDS + manifest 声明推导，不手写清单）。 */
+function renderHelp() {
+  const manifest = getPreprocessManifest();
+  const lines = [
+    `audit-sluice v${VERSION} — ${manifest.label}预处理实现（独立包，可被任何宿主通过 CLI 调用）`,
+    '',
+    '用法：',
+    '  audit-sluice audit --repo <路径> [--scope diff|full] [--visibility private|public|unknown] [--json]',
+    '  audit-sluice manifest [--json]        输出本包声明的端点/动作清单',
+    '  audit-sluice --version                版本',
+    '  audit-sluice --help                   本帮助',
+    '',
+    '其它动作（等价于宿主的预处理 action）：',
+    ...manifest.actions.map((a) => `  audit-sluice ${a.action} — ${a.desc || ''}`.trimEnd()),
+    '',
+    '退出码：0 = 无拦截 / 1 = 有拦截 / 2 = 参数或执行错误',
+  ];
+  return lines.join('\n');
+}
+
 /** 入口：解析 → 执行 → 输出 → 定退出码。 */
 async function main(rawArgv) {
+  // 标准 CLI 约定：`--version` / `version` 只打印版本就退出（装到本地 registry 后
+  //   彩排会用 `--version` 验证 bin 真能跑，没有它彩排就过不了）
+  if (rawArgv.includes('--version') || rawArgv.includes('-v') || rawArgv[0] === 'version') {
+    process.stdout.write(`${VERSION}\n`);
+    return EXIT_OK;
+  }
+  // 标准 CLI 约定：`--help` / `help` 打印用法后正常退出（退出码 0，不是参数错误）
+  if (rawArgv.includes('--help') || rawArgv.includes('-h') || rawArgv[0] === 'help' || rawArgv.length === 0) {
+    process.stdout.write(renderHelp() + '\n');
+    return EXIT_OK;
+  }
   const { command, argv } = parseSubcommand(rawArgv);
 
   // `manifest --json`：把清单写出来就结束（宿主据此挂路由，不需要跑审计）
@@ -384,7 +424,16 @@ async function main(rawArgv) {
 function invokedDirectly() {
   const entry = process.argv[1];
   if (!entry) return false;
-  try { return resolve(entry) === resolve(fileURLToPath(import.meta.url)); } catch { return false; }
+  // 必须走 realpath 比较：npm 安装后 bin 是**符号链接**（node_modules/.bin/audit-sluice
+  //   → ../audit-sluice/cli.mjs），字面路径与 import.meta.url 不相等 ⇒ 误判「不是直接执行」
+  //   ⇒ main 不跑 ⇒ 静默 exit 0 且零输出（本地 registry 彩排抓到的真故障形态）。
+  try {
+    const selfPath = fileURLToPath(import.meta.url);
+    return realpathSync(entry) === realpathSync(selfPath);
+  } catch {
+    // realpath 失败（文件已删/权限）时退回字面比较，至少不误判为「不是自己」
+    try { return resolve(entry) === resolve(fileURLToPath(import.meta.url)); } catch { return false; }
+  }
 }
 
 if (invokedDirectly()) {
