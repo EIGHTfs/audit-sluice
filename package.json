@@ -1,6 +1,6 @@
 {
   "name": "audit-sluice",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "代码审计 CLI：规则驱动 + AST/正则检查 + 评分 + 豁免（零配置可跑，输出单行 JSON 契约）",
   "type": "module",
   "bin": {
@@ -14,8 +14,11 @@
   },
   "files": [
     "lib",
-    "scripts",
     "cli.mjs",
+    "scripts/scan-file-io.mjs",
+    "scripts/doc-tree.mjs",
+    "scripts/doc-func.mjs",
+    "scripts/audit-ext",
     "README.md",
     "LICENSE"
   ],
