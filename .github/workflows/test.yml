@@ -1,0 +1,74 @@
+name: test
+
+# 与 dsh-git-push 的工作流同构（精简版）：
+#   · 本包**有**运行时依赖（js-yaml / web-tree-sitter / tree-sitter-wasms）⇒ 必须装依赖，
+#     规则加载与语法树检查都依赖它们；不装会在规则加载期直接 ERR_MODULE_NOT_FOUND。
+#   · 依赖按 lockfile 装（npm ci 严格比对 package.json 与 lock；漂移在此步就红，
+#     而不是等到某个测试莫名其妙失败）。
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖（按 lockfile）
+        run: npm ci --no-audit --no-fund
+
+      # 语法/JSON 门禁：本包没有独立 check 脚本，这里做最小但有效的三道：
+      #   ① CLI 入口可解析（bin 坏了整个包不可用）
+      #   ② package.json 是合法 JSON（发布元数据坏 = 装不上）
+      #   ③ lib/ 与 scripts/ 下所有文件语法可解析（排查时能少一轮往返）
+      - name: 语法与 JSON 门禁
+        run: |
+          set -e
+          node --check cli.mjs
+          node -e "JSON.parse(require('node:fs').readFileSync('package.json','utf8'));console.log('✅ package.json 可解析')"
+          failed=0
+          count=0
+          while IFS= read -r f; do
+            count=$((count+1))
+            node --check "$f" || failed=$((failed+1))
+          done < <(find lib scripts -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) | sort)
+          echo "语法检查：$((count-failed))/$count 通过"
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::$failed 个文件语法检查未通过"
+            exit 1
+          fi
+
+      # 回归测试。失败时把 not ok 列表写进 job summary + annotation：
+      #   日志下载需要 token，API 的 check-runs 不带日志；摘要与 annotation 能随 check-run 读到，
+      #   远程排障才拿得到具体测试名。
+      - name: 回归测试
+        run: |
+          set -o pipefail
+          if node --test test/*.mjs 2>&1 | tee "$RUNNER_TEMP/test-run.log"; then
+            echo "✅ 全量测试通过" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## ❌ 失败项（not ok）"
+              echo '```'
+              grep -E "^not ok" "$RUNNER_TEMP/test-run.log" | head -40 || echo "(未捕获到 not ok，见日志尾部)"
+              echo '```'
+              echo "## 日志尾部"
+              echo '```'
+              tail -60 "$RUNNER_TEMP/test-run.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -E "^not ok" "$RUNNER_TEMP/test-run.log" | head -20 | sed 's/%/%25/g' | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit 1
+          fi
