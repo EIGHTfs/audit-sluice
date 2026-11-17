@@ -20,6 +20,7 @@
     "scripts/doc-func.mjs",
     "scripts/audit-ext",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "dependencies": {
