@@ -1,5 +1,11 @@
 # 更新日志
 
+## 0.1.2
+
+- `manifest` 的 `cliFlagMap` key 改为「`stage.args` 的键名」（`exemptPaths` / `reason`），宿主不再需要知道这些键对应哪个 CLI flag
+- 删 `commitParams`：不再向宿主贡献工具顶层参数；参数改由调用方通过 `preprocessStages[].args` 传入
+- 删 `legacyEnv`（`DSH_AUDIT_SLUICE_CLI`）：不再兼容旧环境变量名，只认 `DSH_PREPROCESS_<ID>_CLI`
+
 ## 0.1.1
 
 - 清出包内宿主私货：凭据读取（`core/credentials.js`）、GitHub 镜像（`core/endpoints.js` / `mirror-store.js`）、宿主配置 schema（`config/{defaults,schema}.js`）、UI 分片与 ui-sdk、`engine/public.js`、`cli/{commands-doc,module-splitter}.js`、`shared/tools/`
