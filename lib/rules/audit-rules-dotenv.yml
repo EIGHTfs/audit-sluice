@@ -1,0 +1,39 @@
+# .env 文件审计规则（dotenv 槽位，1.0.0）
+#
+# 为什么独立成槽位：.env 有**自有一套解析规则**（不是 shell、不是 JSON），
+#   混进 shell 槽位会被按 shell 语法判（引号/变量展开规则都不一样）。
+#
+# 文件匹配：不声明 exts，由精筛按**文件名**判（`.env` / `.env.*` / `*.env`）——
+#   `.env.local` 的扩展名是 `local`，靠 exts 匹配不到（实测踩到）。
+
+metadata:
+  name: ".env 文件规则（未加引号含 # 的值被截断）"
+  version: "1.0.0"
+  author: "DeepSeek"
+  description: "dotenv 解析里 # 之后是行内注释，未加引号的值含 # 会被静默截断"
+  last_updated: "2026-11-18"
+
+rules:
+  # ----- 规则 1：值未加引号且含 `#`（值被截断）-----
+  # 错法：API_KEY=abc#def
+  #   实际值 = `abc`（不是 abc#def），不报错、认证一直失败。
+  # 为什么是 warning 不是 blocker：
+  #   · 有些解析器（带 custom parser 的）会保留 #，不必然出错；
+  #   · 值可能本来就想要截断（少见但合法）。
+  #   但**绝大多数情况是错的**，且排查成本高（值少一截很难看出来）。
+  - id: dotenv/unquoted-hash
+    name: "未加引号的值含 #（会被截断成注释）"
+    category: "security"
+    severity: "warning"
+    description: "dotenv 文件里 `KEY=abc#def` 形式：# 之后被当作行内注释，实际值只有 abc（静默截断）。含 # 的值必须加引号：KEY=\"abc#def\" 或 KEY='abc#def'。密钥随机串里出现 # 并不罕见，这类截断会让认证一直失败且看不出原因"
+    patterns:
+      # 初筛只做「KEY=... 里有 #」的形状，引号/注释/多行串由精筛判（正则判不准）
+      - "^(?:export\\s+)?[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*[^\\s\"'#]+#"
+    astConfirm: true
+    astConfirmKind: "dotenv-unquoted-hash"
+    exceptions:
+      - "整行注释（# 开头）"
+      - "已加引号：KEY=\"abc#def\" / KEY='abc#def'"
+      - "值里本来就没有 #"
+      - "多行引号串的中间行（引号未闭合时后续行属同一值）"
+      - "解析器带自定义 parser 且明确保留 # 的场景（人工判断）"

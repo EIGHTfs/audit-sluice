@@ -1,0 +1,40 @@
+# Shell 脚本审计规则（shell 槽位，1.0.0）
+#
+# 为什么独立成槽位：`.sh` / `.bash` / `.zsh` 的静默错误形态与 JS/Python 完全不同
+#   （续行符、heredoc、引号嵌套、变量展开），混进 nodejs/python 槽位会互相干扰。
+#   槽位是动态发现的：本文件放进 lib/rules/ 即自动成为槽位（无需改代码）。
+#
+# 三段式：patterns 初筛（本槽位用宽松行尾锚点）→ astConfirm 精筛（拿全文做跨行判定）→ exceptions 说明豁免。
+
+metadata:
+  name: "Shell 脚本规则（续行符静默错误）"
+  version: "1.0.0"
+  author: "DeepSeek"
+  description: "Shell 脚本里续行符后紧跟注释导致变量赋值/命令参数静默失效"
+  last_updated: "2026-11-18"
+
+rules:
+  # ----- 规则 1：续行符 `\` 后跟注释（静默错误）-----
+  # 错法：
+  #   VAR="value" \
+  #   # 这是注释
+  #   echo done
+  # `\` 让 shell 把下一行当本行延续；下一行是注释时，注释被并进命令
+  #   （或让赋值提前结束），变量值不是你以为的那个，且**不报任何错**。
+  # 为什么是 blocker：静默错误最难排查 —— 脚本能跑、退出码 0、结果不对。
+  - id: shell/continuation-comment
+    name: "续行符后紧跟注释（变量赋值静默失效）"
+    category: "robustness"
+    severity: "blocker"
+    exts: ["sh", "bash", "zsh", "ksh"]
+    description: "行尾续行符 \\ 的下一行是注释。shell 会把注释当作续行内容并进命令，导致变量赋值或参数列表静默错位（不报错、退出码正常、结果不对）。正确做法：注释放在完整命令之后，或把长命令拆成多行各自独立"
+    patterns:
+      # 初筛只做「行尾有反斜杠」的形状，跨行关系由精筛算（正则看不见下一行）
+      - "\\\\\\s*$"
+    astConfirm: true
+    astConfirmKind: "shell-continuation-comment"
+    exceptions:
+      - "heredoc 体内（<<EOF ... EOF）：那里的 \\ 与 # 都是字面文本"
+      - "单引号串内：'...' 里的 \\ 不是续行符"
+      - "行尾是偶数个反斜杠（如 \\\\）：那是被转义的反斜杠本身，不是续行"
+      - "下一行虽以 # 开头但属同一行的行内注释延续（少见，人工判断）"
