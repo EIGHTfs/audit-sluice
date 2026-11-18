@@ -57,9 +57,30 @@ function isPluginEntry(text) {
     || /export\s+const\s+inject\b/.test(text);
 }
 
-/** 递归列待扫描的 JS 文件（相对仓库根的路径）。 */
-function collectFiles(repo) {
+/**
+ * 列待扫描的 JS 文件。
+ *
+ * 优先用**主引擎给的本次扫描文件集**（opts.files）：那批文件已过 .auditignore / .gitignore /
+ *   scope 过滤，语义与主引擎一致。此前本脚本自己 readdirSync 全仓递归、只跳 SKIP_DIRS，
+ *   ⇒ 被 gitignore 忽略的上游快照目录照样被扫出 blocker（实测：4 个无关 blocker 拦住纯文档改动）。
+ * 没有 opts.files 时才退回全仓递归（独立调用本脚本的场景）。
+ *
+ * @param {string} repo 仓库根
+ * @param {string[]|null} onlyRel 主引擎给的文件相对路径列表（null/空 = 全仓）
+ * @returns {Array<{abs:string, rel:string}>}
+ */
+function collectFiles(repo, onlyRel = null) {
   const out = [];
+  if (Array.isArray(onlyRel) && onlyRel.length) {
+    for (const rel of onlyRel) {
+      const text = String(rel || '').replace(/\\/g, '/');
+      if (!JS_EXTS.has(extname(text))) continue;
+      const abs = join(repo, text);
+      try { if (statSync(abs).size > MAX_FILE_BYTES) continue; } catch { continue; }
+      out.push({ abs, rel: text });
+    }
+    return out;
+  }
   const walk = (dir) => {
     if (out.length >= MAX_FILES) return;
     let entries;
@@ -171,9 +192,9 @@ function defaultExportConflictLine(text) {
 export const auditExt = {
   name: 'dsh-inject-declarations',
   match: (repo) => Boolean(repo && repo !== '.'),
-  run: async (repo) => {
+  run: async (repo, opts = {}) => {
     const findings = [];
-    for (const file of collectFiles(repo)) {
+    for (const file of collectFiles(repo, opts.files)) {
       let text = '';
       try { text = readFileSync(file.abs, 'utf8'); } catch { continue; }
 

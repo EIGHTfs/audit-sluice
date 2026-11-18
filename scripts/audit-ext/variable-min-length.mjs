@@ -10,7 +10,7 @@
 export const auditExt = {
   name: 'variable-min-length',
   match: (repo) => Boolean(repo && repo !== '.'),
-  run: async (repo) => {
+  run: async (repo, opts = {}) => {
     const { checkNameLengthAst } = await import('../../lib/ast/naming.js');
     // external 规则此前是「写了字段也不生效」：run(repo, opts) 只收到仓库路径，收不到规则对象，
     //   于是 min 硬编码 2、yml 里声明的 exceptions 形同虚设（自审实测：i/j/k/n/e/cb 若真出现也会报）。
@@ -36,11 +36,11 @@ export const auditExt = {
     };
     // 修复：external 通道必须带内置的构建/混淆产物豁免（isBuildArtifactFile——
     //   hash 文件名/单行混淆）——否则单行混淆产物短名密爆（Pawchive hash 产物 5896 条误报）
-    const { isBuildArtifactFile } = await import('../../lib/audit/audit-file.js');
+    const { isBuildArtifactFile } = await import('../../lib/engine/audit-file.js');
     // 修复：external 通道必须尊重 .gitignore/.auditignore——ext 自 walk 文件
     //   不走 collector，此前把被 gitignore 忽略的上游克隆（Pawchive docs/.probe-ktoolbox
     //   KToolBox 源码 68607 文件）扫入审计（14 条短名泄漏）。复用内置匹配器判目录忽略。
-    const { parseGitignore, isIgnoredByRules } = await import('../../lib/audit/gitignore-match.js');
+    const { parseGitignore, isIgnoredByRules } = await import('../../lib/engine/gitignore-match.js');
     const { readFileSync, readdirSync, statSync, existsSync } = await import('node:fs');
     const { join, extname, relative } = await import('node:path');
     const CODE_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
@@ -57,6 +57,11 @@ export const auditExt = {
       if (giText.length) gitignoreRules = parseGitignore(giText.join('\n'));
     } catch { /* 读忽略文件失败 = 不忽略，保守放行 */ }
     const findings = [];
+    // 优先用**主引擎给的本次扫描文件集**（opts.files）：那批文件已过 .auditignore / .gitignore /
+    //   scope 过滤。此前只靠自己 walk + gitignore 判断，scope=changed 时仍全仓扫。
+    //   另注意上面那条 import 曾指向已不存在的 lib/audit/ ⇒ 每次抛错被 catch 吞掉 ⇒ gitignore 恒为空，
+    //   等于完全不忽略（静默失效）；两条一起修。
+    const givenFiles = Array.isArray(opts.files) && opts.files.length ? new Set(opts.files) : null;
     const walk = (dir) => {
       for (const f of readdirSync(dir)) {
         const p = join(dir, f);
@@ -68,6 +73,11 @@ export const auditExt = {
           if (gitignoreRules && isIgnoredByRules(gitignoreRules, relative(repo, p).replace(/\\/g, '/'), true)) continue;
           walk(p);
         } else if (CODE_EXTS.has(extname(f))) {
+          // 主引擎给了文件集时只扫其中列出的文件（尊重 scope）
+          if (givenFiles) {
+            const relForFilter = relative(repo, p).replace(/\\/g, '/');
+            if (!givenFiles.has(relForFilter)) continue;
+          }
           try {
             const text = readFileSync(p, 'utf8');
             const rel = relative(repo, p) || p;
