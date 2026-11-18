@@ -1,5 +1,20 @@
 # 更新日志
 
+## 0.1.3
+
+- 新增槽位 `shell`：`shell/continuation-comment`（blocker）——续行符 `\` 后紧跟注释，
+  导致变量赋值/参数列表静默错位（不报错、退出码正常、结果不对）。跨行判定，排除 heredoc 内与转义反斜杠
+- 新增槽位 `dotenv`：`dotenv/unquoted-hash`（warning）——`.env` 里 `KEY=abc#def` 的 `#` 被当行内注释，
+  实际值只有 `abc`（静默截断）。含 `#` 的值必须加引号
+- 新增规则 `paths/system-path-literal`（warning）：`/tmp`、`/usr/bin` 等系统标准路径**字面量**建议改用
+  跨平台常量（`os.tmpdir()` / `process.execPath` / which 探测）。与 `paths/hardcoded-absolute-path` 按
+  systemKind 分流，同一行只归一条
+- 修：规则注释早写着「已排除临时目录与系统工具目录」，但 `isReasonableAbsolutePath` 从未实现
+  ⇒ `/tmp` 一直被当 blocker 误报。本次把逻辑真正落地
+- 修：`.env` 系列文件**从来没进过审计管道**（`extname('.env') === ''`、`extname('.env.local') === '.local'`
+  ⇒ 扩展名白名单判定失败）⇒ dotenv 规则写好也永远 0 命中。按 `isTextFile` 已有口径补 dotfile 特判
+- 文档：槽位表更新为实测快照（25 槽位 / 172 规则）+ 附刷新脚本（手改数字必然与代码漂移）
+
 ## 0.1.2
 
 - `manifest` 的 `cliFlagMap` key 改为「`stage.args` 的键名」（`exemptPaths` / `reason`），宿主不再需要知道这些键对应哪个 CLI flag
