@@ -10,10 +10,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hardcodedAbsPathHits, hardcodedAbsPathLines } from '../lib/checks/hardcoded-path.js';
+import { hardcodedAbsPathHits, hardcodedAbsPathLines, systemPathLiteralLines } from '../lib/checks/hardcoded-path.js';
 import { loopFullRewriteCallLines } from '../lib/ast/perf.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
 // ---------- hardcoded-abs-path ----------
@@ -55,7 +55,10 @@ test('hardcoded-abs-path：散文举例（混入中文/全角标点）不该报 
 
 test('hardcoded-abs-path：accessible 区分本机可访问与不可访问（前者附相对路径，后者不换算）', () => {
   // 必须用**真实存在**的路径才能测「可访问」分支 —— 首版我用了不存在的 /tmp/xxx 却断言 true，属测试逻辑错
-  const realDir = mkdtempSync(join(tmpdir(), 'dsh-hcp-'));
+  // 不能用 tmpdir()：临时目录现在被豁免（跨机语义一致），用它造样本测不到「应报」分支
+  // 基准目录必须**不含 CJK**：PROSE_MIXED 会把含中文的命中当散文丢弃（引擎既有设计），
+  //   用 cwd（.../工作区/...）造样本会让本用例假失败。homedir 不含中文且不在豁免白名单里。
+  const realDir = mkdtempSync(join(homedir(), '.dsh-hcp-'));
   // 必须真的建出那个文件：existsSync 查的是**完整文件路径**，只建目录会判不可访问
   writeFileSync(join(realDir, 'x.json'), '');
   try {
@@ -110,4 +113,65 @@ test('loop-full-rewrite-call：循环里调的函数不含整份重写（无 wri
     '}',
   ].join('\n');
   assert.equal(loopFullRewriteCallLines(text).size, 0, '只改内存不落盘，不是本规则的目标形态');
+});
+
+// ── 临时目录/系统工具目录豁免（2026-11-18 修：注释说排除了但实现从没落地）──
+test('系统标准路径字面量：报 warning 归 system-path-literal，不归 hardcoded-absolute-path', () => {
+  // 语义：/tmp 换机照样能跑（不是硬编码失效），但字面量不跨平台（Windows 无 /tmp）
+  //   ⇒ 报「应改用 os.tmpdir()」的可移植性建议，severity=warning，不是 blocker。
+  const text = [
+    "const a = '/tmp/cache';",
+    "const b = '/var/tmp/keep';",
+    "const c = '/dev/shm/mem';",
+    "const d = '/usr/bin/node';",
+    "const e = '/usr/local/bin/git';",
+    "const f = '/opt/homebrew/bin/brew';",
+  ].join('\n');
+  const hits = hardcodedAbsPathHits(text);
+  assert.equal(hits.length, 6, '六个字面量都要被识别');
+  assert.ok(hits.every((h) => h.systemKind), '全部应带 systemKind（tmp/tool）');
+  assert.equal(hardcodedAbsPathLines(text).size, 0, '不该归 hardcoded-absolute-path（那是换机失效类）');
+  assert.equal(systemPathLiteralLines(text).size, 6, '应全部归 system-path-literal');
+});
+
+test('用常量写法不报：os.tmpdir() / path.join(__dirname) 都不是字面量', () => {
+  const text = [
+    "const a = join(tmpdir(), 'x');",
+    "const b = path.join(__dirname, 'rel');",
+  ].join('\n');
+  assert.equal(hardcodedAbsPathHits(text).length, 0, '常量写法没有绝对路径字面量');
+});
+
+test('系统工具目录字面量同样归 system-path-literal（建议 process.execPath / which 探测）', () => {
+  const text = [
+    "const a = '/usr/bin/node';",
+    "const b = '/usr/local/bin/git';",
+    "const c = '/opt/homebrew/bin/brew';",
+  ].join('\n');
+  const hits = hardcodedAbsPathHits(text);
+  assert.equal(hits.length, 3);
+  assert.ok(hits.every((h) => h.systemKind === 'tool'), '工具目录应标 systemKind=tool');
+  assert.equal(systemPathLiteralLines(text).size, 3);
+  assert.equal(hardcodedAbsPathLines(text).size, 0, '不该归换机失效类');
+});
+
+test('/var/packages 不豁免：套件目录既可能装工具也可能装业务数据', () => {
+  const text = "const p = '/var/packages/App/target/data.json';";
+  assert.equal(hardcodedAbsPathHits(text).length, 1,
+    'NAS 套件安装目录不当白名单（否则业务硬编码一起放过）');
+});
+
+test('真实硬编码路径仍要报：/volume1、/home、/Users', () => {
+  const text = [
+    "const a = '/volume1/data/x';",
+    "const b = '/home/user/y';",
+    "const c = '/Users/me/z';",
+  ].join('\n');
+  assert.equal(hardcodedAbsPathHits(text).length, 3, '这些换机就失效，必须报');
+});
+
+test('临时目录前缀不能过宽：/tmpfoo 不是临时目录', () => {
+  const text = "const a = '/tmpfoo/data';";
+  assert.equal(hardcodedAbsPathHits(text).length, 0,
+    '/tmpfoo 不匹配 /tmp 前缀正则（要求后面是 / 或结尾）⇒ 但它也不在 PATH_RES 白名单里，故不报');
 });

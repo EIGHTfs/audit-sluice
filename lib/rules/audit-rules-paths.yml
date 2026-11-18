@@ -45,6 +45,28 @@ rules:
       - "测试夹具里刻意构造的样例路径（属测试数据）"
       - "文档中带日期的历史实测记录（说明当时在哪台机器上跑的）"
 
+  # ----- 规则 1b：系统标准路径字面量（2026-11-18 新增）-----
+  # 与规则 1 的区别（靠 astConfirmKind 分流，同一行只归一条）：
+  #   · 规则 1「硬编码绝对路径」= 本机特有路径（/volume1、/home/xxx、/Users/xxx）⇒ 换机失效，blocker
+  #   · 本规则「系统路径字面量」= 系统标准位置（/tmp、/var/tmp、/dev/shm、/usr/bin…）
+  #     语义跨机一致（换机照样能跑），但**字面量不跨平台**（Windows 没有 /tmp）⇒ 可移植性问题，warning
+  # 为什么必须报而不是放过：写 /tmp 的代码在 Windows 上直接失效；
+  #   正确写法是 os.tmpdir()（Node）/ tempfile.gettempdir()（Python）/ mktemp（Shell）。
+  - id: paths/system-path-literal
+    name: "系统标准路径字面量（应改用跨平台常量）"
+    category: "paths"
+    severity: "warning"
+    description: "直接写 /tmp、/var/tmp、/dev/shm、/usr/bin、/usr/local/bin、/opt/homebrew 等系统标准路径字面量。语义跨机一致，但字面量不跨平台（Windows 无 /tmp），应改用系统常量：临时目录 os.tmpdir() / tempfile.gettempdir() / mktemp；可执行文件 process.execPath / which 探测 / PATH 查找"
+    patterns:
+      - "/(volume[0-9]+|home|Users|var|usr|opt|tmp|mnt|srv|etc|root|Applications|Volumes)/[^\\s\"'`),;]+"
+    astConfirm: true
+    astConfirmKind: "system-path-literal"
+    exceptions:
+      - "已用 os.tmpdir() / tempfile.gettempdir() / mktemp 的写法（正则不命中，因为不是字面量）"
+      - "注释里的举例说明（精筛按 systemKind 判定，注释行通常已被散文过滤掉）"
+      - "测试夹具里刻意构造的样例路径"
+      - "Shell 脚本里的 /tmp 若配合 mktemp 使用属正确做法（mktemp 会自己决定目录）"
+
   # ----- 规则 2（迁移自 nodejs 槽位）：路径穿越防护 -----
   - id: security/no-path-traversal
     name: "路径穿越防护"
