@@ -82,22 +82,43 @@ audit 消费时对 `audit-rules-*.yml` 路径跳过 residue 类豁免（规则�
 
 ### 2.1 槽位（slot）→ 文件
 
-| 槽位 | 文件 | 规则数（2026-09-11 工作区实测） |
+| 槽位 | 文件 | 规则数 |
 |---|---|---|
-| nodejs | `lib/rules/audit-rules-nodejs.yml` | 36 |
-| frontend | `lib/rules/audit-rules-frontend.yml` | 19 |
-| npm | `lib/rules/audit-rules-npm.yml` | 10 |
-| version | `lib/rules/audit-rules-version.yml` | 8 |
-| dsh | `lib/rules/audit-rules-dsh.yml` | 7 |
-| comment | `lib/rules/audit-rules-comment.yml` | 6 |
-| i18n | `lib/rules/audit-rules-i18n.yml` | 3 |
+| nodejs | `lib/rules/audit-rules-nodejs.yml` | 37 |
+| frontend | `lib/rules/audit-rules-frontend.yml` | 26 |
+| npm | `lib/rules/audit-rules-npm.yml` | 17 |
+| performance | `lib/rules/audit-rules-performance.yml` | 12 |
+| dsh | `lib/rules/audit-rules-dsh.yml` | 10 |
+| comment | `lib/rules/audit-rules-comment.yml` | 7 |
+| java | `lib/rules/audit-rules-java.yml` | 7 |
+| python | `lib/rules/audit-rules-python.yml` | 7 |
+| paths | `lib/rules/audit-rules-paths.yml` | 6 |
+| php | `lib/rules/audit-rules-php.yml` | 6 |
+| cpp | `lib/rules/audit-rules-cpp.yml` | 5 |
+| go | `lib/rules/audit-rules-go.yml` | 5 |
+| rust | `lib/rules/audit-rules-rust.yml` | 5 |
+| swift | `lib/rules/audit-rules-swift.yml` | 5 |
 | folder | `lib/rules/audit-rules-folder.yml` | 4 |
-| performance | `lib/rules/audit-rules-performance.yml` | 2（memory-bomb 7 子模式 + busy-wait） |
+| csharp | `lib/rules/audit-rules-csharp.yml` | 3 |
+| i18n | `lib/rules/audit-rules-i18n.yml` | 3 |
 | docs | `lib/rules/audit-rules-docs.yml` | 1 |
+| dotenv | `lib/rules/audit-rules-dotenv.yml` | 1 |
+| filehealth | `lib/rules/audit-rules-filehealth.yml` | 1 |
 | robustness | `lib/rules/audit-rules-robustness.yml` | 1 |
+| shell | `lib/rules/audit-rules-shell.yml` | 1 |
 | structure | `lib/rules/audit-rules-structure.yml` | 1 |
 | template | `lib/rules/audit-rules-template.yml` | 1（模板，默认不加载） |
 | private | `lib/rules/audit-rules-private.yml` | 0（私有拦截清单槽位） |
+
+> 上表是 **2026-11-18 实测快照**（25 槽位 / 172 规则）。规则文件增删改后要重跑这段脚本刷新，
+> 不要手改数字（手改必然与代码漂移）：
+>
+> ```bash
+> node --input-type=module -e "
+> const { discoverRuleSlots, loadYamlRuleFile } = await import('./lib/rule/loader.js');
+> for (const s of discoverRuleSlots()) console.log(s, (loadYamlRuleFile(s)?.data?.rules||[]).length);
+> "
+> ```
 
 > 槽位全动态：**新建 `audit-rules-<名>.yml` 即自动成为槽位**（`discoverRuleSlots` 扫目录），删文件即移除，不需要改代码。
 > 加载/合并/排序细节见 2.6「槽位加载与合并语义」。
