@@ -104,7 +104,7 @@ const result = await audit({ repoPath: '/path/to/repo', scope: 'full', visibilit
 | folder | 4 | template | 1 |
 | — | — | private | 0 |
 
-逐条规则说明见 [docs/功能-审计规则体系.md](docs/功能-审计规则体系.md)。
+逐条规则说明见 [docs/功能-审计规则体系.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/%E5%8A%9F%E8%83%BD-%E5%AE%A1%E8%AE%A1%E8%A7%84%E5%88%99%E4%BD%93%E7%B3%BB.md)。
 
 ## 豁免
 
@@ -117,7 +117,7 @@ const result = await audit({ repoPath: '/path/to/repo', scope: 'full', visibilit
 | 临时豁免 | `--exempt-paths a,b` | 仅本次有效，不落盘 |
 | 私有库 | `--visibility private` | 只报告不拦截 |
 
-标记清单与逐条语义见 [docs/DETAILS-EXEMPT-AND-RULES.md](docs/DETAILS-EXEMPT-AND-RULES.md)。
+标记清单与逐条语义见 [docs/DETAILS-EXEMPT-AND-RULES.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/DETAILS-EXEMPT-AND-RULES.md)。
 
 ## 目录结构
 
@@ -144,11 +144,11 @@ docs/                   设计与说明
 
 ## 文档
 
-- [docs/功能-审计引擎.md](docs/功能-审计引擎.md) — 引擎总览：规则体系、判定流程、评分、外部 linter 委托、豁免通道
-- [docs/功能-审计规则体系.md](docs/功能-审计规则体系.md) — 规则作用域字段与逐条规则说明
-- [docs/DETAILS-EXEMPT-AND-RULES.md](docs/DETAILS-EXEMPT-AND-RULES.md) — 豁免注释与规则 yml 全录
-- [docs/FUNCTIONS.md](docs/FUNCTIONS.md) — 全部函数索引（自动生成）
-- [docs/PERF-BASELINE.md](docs/PERF-BASELINE.md) — 性能基线
+- [docs/功能-审计引擎.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/%E5%8A%9F%E8%83%BD-%E5%AE%A1%E8%AE%A1%E5%BC%95%E6%93%8E.md) — 引擎总览：规则体系、判定流程、评分、外部 linter 委托、豁免通道
+- [docs/功能-审计规则体系.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/%E5%8A%9F%E8%83%BD-%E5%AE%A1%E8%AE%A1%E8%A7%84%E5%88%99%E4%BD%93%E7%B3%BB.md) — 规则作用域字段与逐条规则说明
+- [docs/DETAILS-EXEMPT-AND-RULES.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/DETAILS-EXEMPT-AND-RULES.md) — 豁免注释与规则 yml 全录
+- [docs/FUNCTIONS.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/FUNCTIONS.md) — 全部函数索引（自动生成）
+- [docs/PERF-BASELINE.md](https://github.com/EIGHTfs/audit-sluice/blob/master/docs/PERF-BASELINE.md) — 性能基线
 
 ## 依赖
 
