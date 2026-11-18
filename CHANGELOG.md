@@ -1,5 +1,24 @@
 # 更新日志
 
+## 0.1.4
+
+- 修：审计扩展脚本（`scripts/audit-ext/*.mjs`）**无视 `.auditignore` / `.gitignore` / `scope`**——
+  两个 ext 各自 `readdirSync` 全仓递归、只跳 `SKIP_DIRS` ⇒ 被 gitignore 忽略的上游源码快照目录
+  照样被扫出 blocker，把一次纯文档改动拦住。现在引擎把「本次扫描的文件集 + scope」传给 ext，
+  ext 优先用它（无 files 时才退回全仓）
+- 修：`variable-min-length.mjs` 两处 import 指向拆包前的旧目录（`lib/audit/*` → `lib/engine/*`）。
+  这两行抛错后被 `catch {}` 吞掉 ⇒ gitignore 判定恒为空（完全不忽略）、构建产物豁免恒失效，全是静默失效
+- 修：`paths/hardcoded-absolute-path` 把 **shell/批处理变量拼接**当字面路径
+  （`/var/packages/${PACKAGE_NAME}`、`/var/log/packages/$(echo …)`、`$HOME/x`、`%APPDATA%\x`）——
+  实测一个 NAS 打包仓库有 33 处被误报 blocker。变量拼接不是字面路径，不报
+- 修：系统标准目录（`/usr`、`/etc`、`/var`、`/opt/homebrew`、`/dev/shm`）归 `paths/system-path-literal`
+  （**warning**，建议改用常量/探测），不再当「换机失效」的 blocker。实测 `/usr/syno/bin/synopkg`、
+  `/etc/passwd`、`/var/cache/synopkg/*` 全被误报
+- 修：`describeHardcodedAbsPath` 的不可访问分支不再写「⇒ 仅警告」——severity 由规则决定，文案不该替它下结论
+- 文档：22 个文件 25 处注释里的旧目录名 `lib/audit/` → `lib/engine/`
+- 测试：新增 `test/test-ext-respects-file-list.mjs`（3 条：传 files 只扫列出文件 / 不传退回全仓 /
+  传空数组等同不传）；596 / 596 通过
+
 ## 0.1.3
 
 - 新增槽位 `shell`：`shell/continuation-comment`（blocker）——续行符 `\` 后紧跟注释，
