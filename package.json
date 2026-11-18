@@ -3,14 +3,15 @@
   "version": "0.1.3",
   "description": "代码审计 CLI：规则驱动 + AST/正则检查 + 评分 + 豁免（零配置可跑，输出单行 JSON 契约）",
   "type": "module",
-  "bin": {
-    "audit-sluice": "./cli.mjs"
-  },
+  "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./cli": "./cli.mjs",
     "./manifest": "./lib/manifest.js",
     "./package.json": "./package.json"
+  },
+  "bin": {
+    "audit-sluice": "./cli.mjs"
   },
   "files": [
     "lib",
@@ -23,21 +24,23 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
-  "dependencies": {
-    "js-yaml": "4.1.0",
-    "tree-sitter-wasms": "0.1.13",
-    "web-tree-sitter": "0.25.10"
+  "publishConfig": {
+    "access": "public"
   },
-  "devDependencies": {},
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT",
   "scripts": {
     "audit": "node cli.mjs --scope full --json",
     "test": "node --test test/",
     "doc-tree": "node scripts/doc-tree.mjs apply",
     "doc-func": "node scripts/doc-func.mjs apply"
   },
-  "main": "./lib/index.js"
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "4.1.0",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.25.10"
+  },
+  "devDependencies": {}
 }
