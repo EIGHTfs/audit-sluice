@@ -32,7 +32,7 @@
   },
   "scripts": {
     "audit": "node cli.mjs --scope full --json",
-    "test": "node --test test/",
+    "test": "node --test test/*.mjs",
     "doc-tree": "node scripts/doc-tree.mjs apply",
     "doc-func": "node scripts/doc-func.mjs apply"
   },
